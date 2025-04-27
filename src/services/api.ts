@@ -3,6 +3,20 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000';
 
+// Configure axios with CORS headers
+axios.defaults.baseURL = API_URL;
+axios.defaults.headers.common['Content-Type'] = 'application/json';
+axios.defaults.withCredentials = false; // Set to true if using cookies
+
+// Add axios interceptor for better error logging
+axios.interceptors.response.use(
+  response => response,
+  error => {
+    console.error('API Error:', error.response || error);
+    return Promise.reject(error);
+  }
+);
+
 const api = {
       async getAdminSettings(): Promise<any> { // Correct return type
         try {
@@ -95,7 +109,50 @@ const api = {
           console.error('Error downloading PDF:', error);
           throw error; // Or handle the error appropriately
       }
-  },   
+  },
+  async generateImage(description: string): Promise<any> {
+    try {
+        const response = await axios.post(`/api/image/generate-from-story`, {
+            specific_description: description
+        });
+        return response.data;
+    } catch (error) {
+        console.error("Error generating image:", error);
+        throw error;
+    }
+},
+
+  async saveImage(imageData: any): Promise<any> {
+      try {
+          const response = await axios.post(`${API_URL}/api/image/save`, imageData);
+          return response.data;
+      } catch (error) {
+          console.error("Error saving image:", error);
+          throw error;
+      }
+  },
+
+  async getUserImages(userId: number): Promise<any[]> {
+    try {
+        const response = await axios.get(`/api/image/user`, {
+            params: { user_id: userId }
+        });
+        return response.data;
+    } catch (error) {
+        console.error("Error getting user images:", error);
+        return [];
+    }
+  },
+
+  async deleteImage(imageId: number): Promise<boolean> {
+      try {
+          const response = await axios.delete(`${API_URL}/api/image/delete/${imageId}`);
+          return response.data.success;
+      } catch (error) {
+          console.error("Error deleting image:", error);
+          return false;
+      }
+  }
 };
 
 export default api;

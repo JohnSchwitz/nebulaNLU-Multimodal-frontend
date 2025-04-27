@@ -1,6 +1,8 @@
+// src/router/index.ts
 import { createRouter, createWebHistory } from 'vue-router'
 import CreateStory from '../views/CreateStory.vue'
 import CreateNarrative from '../views/CreateNarrative.vue'
+import CreatePicture from '../views/CreatePicture.vue'
 import ExampleStory from '../views/ExampleStory.vue'
 import AdminView from '../admin/views/AdminView.vue'
 import AdminLogin from '../admin/views/AdminLogin.vue'
@@ -19,6 +21,11 @@ const routes = [
     path: '/create-narrative',
     name: 'CreateNarrative',
     component: CreateNarrative
+  },
+  {
+    path: '/create-picture',
+    name: 'CreatePicture',
+    component: CreatePicture
   },
   {
     path: '/example-story',
