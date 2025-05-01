@@ -1,4 +1,4 @@
-<!-- views/CreatePicture.vue -->
+<!-- views/CreatePicture.vue - Updated with modification support -->
 <template>
   <div class="max-w-4xl mx-auto">
     <div class="mb-6">
@@ -86,16 +86,16 @@
       </div>
     </div>
 
-    <!-- Refine Image Section -->
+    <!-- Modify Image Section - NEW -->
     <div v-if="generatedImage && !isGenerating" class="bg-white rounded-lg shadow-md p-6 mb-6">
-      <h2 class="text-2xl font-bold mb-4">Refine Your Image</h2>
+      <h2 class="text-2xl font-bold mb-4">Modify Your Image</h2>
 
       <div class="mb-4">
-        <label for="image-refinement" class="block text-lg mb-2">Modifications</label>
+        <label for="image-modifications" class="block text-lg mb-2">Modification Instructions</label>
         <textarea
-          id="image-refinement"
-          v-model="imageRefinement"
-          placeholder="Describe changes you'd like to make to the image..."
+          id="image-modifications"
+          v-model="modificationInstructions"
+          placeholder="Describe changes you'd like to make to the image. For example: 'Make the sky more blue', 'Add a cat in the foreground', 'Change the lighting to sunset'"
           rows="4"
           class="w-full border rounded px-3 py-2"
         ></textarea>
@@ -103,12 +103,22 @@
 
       <div class="text-right">
         <button
-          @click="regenerateImage"
-          :disabled="!imageRefinement.trim() || isGenerating"
+          @click="modifyImage"
+          :disabled="!modificationInstructions.trim() || isModifying"
           class="bg-gray-800 text-white px-6 py-3 rounded font-bold hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Regenerate with Changes
+          {{ isModifying ? 'Modifying...' : 'Apply Changes' }}
         </button>
+      </div>
+
+      <!-- Modification History -->
+      <div v-if="modificationHistory.length > 0" class="mt-6">
+        <h3 class="text-xl font-bold mb-2">Modification History</h3>
+        <div class="space-y-2 mt-3">
+          <div v-for="(mod, index) in modificationHistory" :key="index" class="p-2 bg-gray-100 rounded">
+            <p class="text-sm"><strong>Modified:</strong> {{ mod.instructions }}</p>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -148,16 +158,18 @@ export default defineComponent({
   setup() {
     const imageTitle = ref('');
     const imageDescription = ref('');
-    const imageRefinement = ref('');
+    const modificationInstructions = ref('');
     const generatedImage = ref<string | null>(null);
     const visualDescription = ref('');
     const isGenerating = ref(false);
+    const isModifying = ref(false);
     const isSaving = ref(false);
     const error = ref('');
     const successMessage = ref('');
     const user_id = ref(1); // Default user ID
     const savedImages = ref<any[]>([]);
     const currentImageId = ref<number | null>(null);
+    const modificationHistory = ref<{instructions: string, date: Date}[]>([]);
 
     const canGenerate = computed(() => {
       return imageDescription.value.trim().length >= 10;
@@ -181,6 +193,9 @@ export default defineComponent({
           generatedImage.value = response.image_url;
           visualDescription.value = response.visual_description;
           successMessage.value = 'Image generated successfully!';
+
+          // Reset modification history when generating a new image
+          modificationHistory.value = [];
         } else {
           throw new Error(response.message || 'Failed to generate image');
         }
@@ -192,35 +207,44 @@ export default defineComponent({
       }
     }
 
-    async function regenerateImage() {
-      if (!imageRefinement.value.trim() || isGenerating.value) return;
+    async function modifyImage() {
+      if (!modificationInstructions.value.trim() || isModifying.value) return;
 
-      isGenerating.value = true;
+      isModifying.value = true;
       error.value = '';
       successMessage.value = '';
 
-      // Combine original description with refinements
-      const combinedDescription = `${imageDescription.value}\n\nWith these modifications: ${imageRefinement.value}`;
-
       try {
-        const response = await api.generateImage(combinedDescription);
+        const response = await api.modifyImage(
+          imageDescription.value,
+          modificationInstructions.value
+        );
 
         if (response.success) {
+          // Update the current image
           generatedImage.value = response.image_url;
-          visualDescription.value = response.visual_description;
-          successMessage.value = 'Image regenerated with your changes!';
 
-          // Update the description to include the changes
-          imageDescription.value = combinedDescription;
-          imageRefinement.value = '';
+          // Add to modification history
+          modificationHistory.value.push({
+            instructions: modificationInstructions.value,
+            date: new Date()
+          });
+
+          // Update the description to include the modifications for future changes
+          imageDescription.value = response.visual_description;
+
+          // Reset the modification input
+          modificationInstructions.value = '';
+
+          successMessage.value = 'Image modified successfully!';
         } else {
-          throw new Error(response.message || 'Failed to regenerate image');
+          throw new Error(response.message || 'Failed to modify image');
         }
       } catch (err: any) {
         console.error('API Error:', err);
-        error.value = err.message || 'Failed to regenerate image';
+        error.value = err.message || 'Failed to modify image';
       } finally {
-        isGenerating.value = false;
+        isModifying.value = false;
       }
     }
 
@@ -290,30 +314,33 @@ export default defineComponent({
     function resetForm() {
       imageTitle.value = '';
       imageDescription.value = '';
-      imageRefinement.value = '';
+      modificationInstructions.value = '';
       generatedImage.value = null;
       visualDescription.value = '';
       error.value = '';
       successMessage.value = '';
       currentImageId.value = null;
+      modificationHistory.value = [];
     }
 
     return {
       imageTitle,
       imageDescription,
-      imageRefinement,
+      modificationInstructions,
       generatedImage,
       visualDescription,
       isGenerating,
+      isModifying,
       isSaving,
       error,
       successMessage,
       user_id,
       savedImages,
       currentImageId,
+      modificationHistory,
       canGenerate,
       generateImage,
-      regenerateImage,
+      modifyImage,
       saveImage,
       loadSavedImages,
       downloadImage,

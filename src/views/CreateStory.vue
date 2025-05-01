@@ -1,493 +1,426 @@
 <!-- CreateStory.vue -->
 <template>
   <div class="max-w-4xl mx-auto px-4">
-    <div class="mb-4">
-      <p class="text-lg font-didot leading-[1.2]">
-        Your turn to create a story. Provide as much detail on the characters, their names,
-        the setting, and action or challenge in <b>StoryTeller input:</b>.
-        <br><br>
-        The <b>AI StoryCreator</b> will then create a story. You may interact with the StoryCreator
-        as many times as required to alter or add to the story. Here is an example of AI StoryTelling:
-        <router-link
-          to="/example-story"
-          class="text-blue-600 hover:text-blue-800 underline"
-        >
-          Fearless Princess Hazel
-        </router-link>.
-        If you wish to create PDF's or a NARRATIVE from previous stories click the Create Narrative button in the NAVAGATION line above.
-      </p>
+    <!-- User Info / Loading Message from Store -->
+    <div v-if="authIsLoading" class="text-center py-4 text-gray-600 font-didot">
+      Loading user information...
+    </div>
+    <div v-else-if="authError" class="my-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+      <span class="block sm:inline">
+        <strong class="font-bold">Error:</strong> {{ authError }} Features requiring login may be disabled.
+      </span>
+    </div>
+     <div v-else-if="userId" class="my-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative">
+      <span class="block sm:inline">
+        <strong class="font-bold">User Identified:</strong> {{ authUserName || 'User' }} ready. (Status: {{ authUserStatus || 'N/A' }})
+      </span>
     </div>
 
-    <div class="my-0">
-      <h2 class="text-2xl font-didot font-bold text-center mb-4 leading-[1.2]">
-        Instructions to Save Your Story and create a PDF
-      </h2>
-      <p class="text-lg font-didot text-left leading-[1.2]">
-        1) Build your story through multiple interactions with the AI StoryCreator.
-      </p>
-      <p class="text-lg font-didot text-left leading-[1.2]">
-        2) When satisfied, use the "Complete Story" button to finalize your story.
-      </p>
-      <p class="text-lg font-didot text-left leading-[1.2]">
-        3) Enter a Story Name, then Upload to Database or download a PDF.
-      </p>
-      <p class="text-lg font-didot text-left leading-[1.2]">
-        4) Generate an image based on your story to bring it to life visually.
-      </p>
-    </div>
-  </div>
-  <div class="max-w-4xl mx-auto px-4">
-    <div class="flex flex-wrap items-center gap-4 my-8">
-      <label for="storyName" class="text-lg font-didot">Story Name</label>
-      <input
-        type="text"
-        v-model="storyName"
-        id="storyName"
-        :placeholder="storyName.length === 0 ? 'Story Title' : ''"
-        class="border rounded px-3 py-2 w-48 font-didot"
-      />
+    <!-- Rest of template -->
+    <!-- ... -->
       <button
         @click="uploadToDatabase"
-        :disabled="!isCompleted || !isStoryNameValid"
-        class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Upload to Database
-      </button>
-      <button
-        @click="downloadPDF"
-        :disabled="!isCompleted"
-        class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Download PDF
-      </button>
-      <button
-        @click="openImageDialog"
-        :disabled="!isCompleted"
-        class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Generate Image
-      </button>
-    </div>
-
-    <div v-if="loading" class="loading-spinner">
-      <div class="spinner"></div>
-    </div>
-
-    <div class="flex flex-wrap items-center justify-between gap-4 mb-2 w-full">
-      <p class="text-lg font-didot font-bold text-left leading-[1.2]">
-        AI StoryCreator:
-        <span v-if="sessionId" class="text-sm font-normal">(Iteration {{ currentIteration }})</span>
-      </p>
-      <!-- Complete Story button-->
-      <button
-        @click="completeStory"
-        :disabled="loading || !sessionId"
-        class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Complete Story
-      </button>
-      <div class="flex-grow text-center">
-        <p class="text-xl font-didot font-bold">ScrollBox</p>
-      </div>
-      <div class="w-[140px]"></div>
-    </div>
-
-    <!-- ScrollBox -->
-    <div class="bg-chatbox-light rounded-lg p-4 mb-4 min-h-[200px] max-h-[600px] overflow-y-auto">
-      <textarea
-        v-if="isEditable"
-        v-model="storyContent"
-        class="flex-1 w-full h-full min-h-[200px] max-h-[600px] bg-white text-black p-3 rounded resize-y"
-      ></textarea>
-      <div v-else v-for="(message, index) in messages" :key="index" class="mb-3">
-        <div
-          :class="message.sender === 'AI' ? 'bg-white text-black block p-3' : 'bg-white text-black block p-3'"
-          class="rounded relative"
-        >
-          {{ message.text }}
-        </div>
-      </div>
-    </div>
-
-    <!-- Generated Image Display Area -->
-    <div v-if="generatedImage" class="mb-6">
-      <h3 class="text-xl font-didot font-bold mb-2">Generated Image</h3>
-      <div class="bg-white p-4 rounded-lg shadow">
-        <img :src="generatedImage" alt="Generated story image" class="mx-auto max-w-full h-auto rounded" />
-        <p v-if="imageDescription" class="mt-3 text-sm italic font-didot">{{ imageDescription }}</p>
-      </div>
-    </div>
-
-    <div class="flex flex-wrap items-center justify-between gap-4 mb-2 w-full">
-      <p class="text-lg font-didot font-bold text-left leading-[1.2]">
-        Send story to AI:
-      </p>
-      <!-- Send button-->
+        :disabled="!isCompleted || !isStoryNameValid || !userId" <!-- Use userId from store -->
+        class="..."
+        title="Requires completed story, valid name, and user ID"
+      > Upload to Database </button>
+    <!-- ... -->
       <button
         @click="generateStory"
-        :disabled="!storyTellerInput.trim() || loading"
-        class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {{ sessionId ? 'Continue Story' : 'Start Story' }}
-      </button>
-      <div class="flex-grow text-center">
-        <p class="text-xl font-didot font-bold"></p>
-      </div>
-      <div class="w-[140px]"></div>
-    </div>
+        :disabled="!storyTellerInput.trim() || loading || (!sessionId && !userId)" <!-- Check userId from store -->
+        class="..."
+      > {{ sessionId ? 'Continue Story' : 'Start Story' }} </button>
+    <!-- ... -->
 
-    <!-- StoryTeller Input -->
-    <div class="bg-chatbox-light rounded-lg p-4 flex gap-4 items-start">
-      <textarea
-        v-model="storyTellerInput"
-        :placeholder="sessionId ? 'Provide feedback or direction for the next part...' : 'Describe the story you want to create...'"
-        rows="2"
-        class="flex-1 bg-white placeholder-black resize-y p-2 focus:outline-none"
-      ></textarea>
-    </div>
-    <div v-if="error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mt-4">
-      <span class="block sm:inline">{{ error }}</span>
-    </div>
-    <div v-if="successMessage" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mt-4">
-      <span class="block sm:inline">{{ successMessage }}</span>
-    </div>
-    <div v-if="loading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="spinner"></div>
-    </div>
   </div>
-
-  <!-- Image Generation Dialog -->
-  <div v-if="showImageDialog" class="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-50">
-    <div class="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
-      <h2 class="text-xl font-didot font-bold mb-4">Generate an Image from Your Story</h2>
-
-      <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-2">
-          Describe the scene you want to visualize:
-        </label>
-        <textarea
-          v-model="imagePrompt"
-          rows="4"
-          class="w-full border rounded-md p-2 text-black"
-          placeholder="Describe a specific scene from your story that you'd like to see as an image..."
-        ></textarea>
-      </div>
-
-      <div class="mb-4">
-        <p class="text-sm text-gray-600">
-          <span class="font-bold">Tip:</span> Provide specific details about characters, settings, and the specific moment you want to capture.
-        </p>
-      </div>
-
-      <div class="flex justify-end gap-3">
-        <button
-          @click="closeImageDialog"
-          class="bg-gray-300 text-black px-4 py-2 rounded hover:bg-gray-400 font-didot"
-        >
-          Cancel
-        </button>
-        <button
-          @click="generateImage"
-          :disabled="!imagePrompt.trim() || imageGenerating"
-          class="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {{ imageGenerating ? 'Generating...' : 'Generate Image' }}
-        </button>
-      </div>
-    </div>
-  </div>
+  <!-- ... More template ... -->
 </template>
 
-<script>
-import axios from 'axios'
-const API_URL = 'http://127.0.0.1:5000'
+<script setup> // <-- Use script setup
+import { ref, computed, onMounted } from 'vue';
+import axios from 'axios';
+import { useAuthStore } from '@/stores/auth'; // <-- Import the auth store
+import { storeToRefs } from 'pinia'; // <-- Import storeToRefs
 
-export default {
-    name: 'CreateStory',
-    data() {
-        return {
-            storyPrompt: `Create an ADVENTURE STORY with CHARACTERS, SETTING, ACTION, MOTIVATION, CHALLENGE and STORY LINE provided by the
-              StoryTeller. Please introduce at least one SURPRISE CHARACTER to challenge the HERO and a PLOT TWIST. The Complete Story should
-              require between 4 and 7 submissions of approximately 150 words from the StoryTeller. Each submission should continue the
-              narrative from the previous. The Complete Story should be 1,000 to 1,500 words.`,
-            storyContent: "",
-            storyName: "",
-            user_id: 1,
-            messages: [],
-            storyTellerInput: "",
-            error: "",
-            successMessage: "",
-            loading: false,
-            isCompleted: false,
-            isEditable: false,
-            sessionId: null,
-            currentIteration: 0,
+// API URL setup
+const API_URL = import.meta.env.VITE_APP_API_URL || 'http://127.0.0.1:5000';
+axios.defaults.baseURL = API_URL;
 
-            // Image generation related properties
-            showImageDialog: false,
-            imagePrompt: "",
-            imageGenerating: false,
-            generatedImage: null,
-            imageDescription: ""
-        }
-    },
+// --- Pinia Auth Store ---
+const authStore = useAuthStore();
+// Make state properties reactive using storeToRefs
+const {
+    userId, // Now directly usable in template/script as reactive ref
+    userStatus: authUserStatus,
+    userName: authUserName,
+    error: authError, // Renamed from store's error to avoid conflict
+    isLoading: authIsLoading,
+    isAuthenticated // Getter
+} = storeToRefs(authStore);
+// ------------------------
 
-    computed: {
-        isStoryNameValid() {
-            return this.storyName && this.storyName.trim() !== "Story Title"
-        }
-    },
+// --- Local Component State (Replicating original data properties as refs) ---
+const storyPrompt = ref(`Create an ADVENTURE STORY with CHARACTERS, SETTING, ACTION, MOTIVATION, CHALLENGE and STORY LINE provided by the StoryTeller. Please introduce at least one SURPRISE CHARACTER to challenge the HERO and a PLOT TWIST. The Complete Story should require between 4 and 7 submissions of approximately 150 words from the StoryTeller. Each submission should continue the narrative from the previous. The Complete Story should be 1,000 to 1,500 words.`); // Keep your original prompt
+const storyContent = ref("");
+const storyName = ref("");
+const messages = ref([]);
+const storyTellerInput = ref("");
+const sessionId = ref(null);
+const currentIteration = ref(0);
+const isCompleted = ref(false);
+const isEditable = ref(false);
 
-    mounted() {
-        axios.defaults.baseURL = import.meta.env.VITE_APP_API_URL || API_URL
-        // Initialize ScrollBox with instructions
-        this.messages = []
-        this.messages.push({ sender: 'AI', text: this.storyPrompt })
-    },
+// Local error/success for component actions (distinct from authError)
+const error = ref("");
+const successMessage = ref("");
+const loading = ref(false); // Local loading for component actions (API calls etc.)
 
-    methods: {
-        async generateStory() {
-            if (!this.storyTellerInput.trim()) return;
+// Image generation state
+const showImageDialog = ref(false);
+const imagePrompt = ref("");
+const imageGenerating = ref(false);
+const generatedImage = ref(null);
+const imageDescription = ref(null);
+// ---------------------------
 
-            this.loading = true;
-            this.error = this.sessionId ? "Continuing story..." : "Starting new story...";
+// --- Computed Properties ---
+const isStoryNameValid = computed(() => {
+  // Ensure storyName is not empty and not just the placeholder text if you keep it
+  return storyName.value && storyName.value.trim() !== "" && storyName.value.trim().toLowerCase() !== "story title";
+});
+// --------------------------
 
-            try {
-                let response;
+// --- Lifecycle Hooks ---
+onMounted(() => {
+  console.log("CreateStory component mounted.");
+  // Call the action in the store to process URL params
+  // Only do this if the user isn't already identified (e.g., from previous navigation)
+  // And only if the specific param exists in the current URL search string
+  if (!userId.value && window.location.search.includes('ghost_member_uuid')) {
+      authStore.setUserInfoFromUrl(window.location.search);
+  } else if (!userId.value) {
+       console.warn("CreateStory mounted, but no user ID in store or URL params.");
+       // The template already shows the authError if present
+  } else {
+       console.log("CreateStory mounted, user already identified in store:", userId.value);
+  }
 
-                if (!this.sessionId) {
-                    // Starting a new story
-                    response = await axios.post(`${API_URL}/api/story/start`, {
-                        user_id: this.user_id,
-                        initial_prompt: this.storyTellerInput,
-                        system_prompt: this.storyPrompt
-                    });
+  // Initialize ScrollBox
+  messages.value = [{ sender: 'AI', text: storyPrompt.value }];
+});
+// ----------------------
 
-                    this.sessionId = response.data.session_id;
-                    this.currentIteration = response.data.iteration;
-                } else {
-                    // Continuing an existing story
-                    response = await axios.post(`${API_URL}/api/story/continue`, {
-                        session_id: this.sessionId,
-                        feedback: this.storyTellerInput
-                    });
+// --- Methods (Converted from original methods object) ---
 
-                    this.currentIteration = response.data.iteration;
-                }
+const generateStory = async () => {
+  // Check store's userId before starting a *new* story
+  if (!sessionId.value && !userId.value) {
+    error.value = "Cannot start story: User information is missing.";
+    successMessage.value = "";
+    return;
+  }
+  if (!storyTellerInput.value.trim()) return;
 
-                // Update the messages
-                this.messages.push({ sender: 'StoryTeller', text: this.storyTellerInput });
-                this.messages.push({ sender: 'AI', text: response.data.story });
+  loading.value = true;
+  error.value = ""; // Clear previous errors
+  successMessage.value = "";
 
-                // Update story content (append)
-                if (this.storyContent) {
-                    this.storyContent += "\n\n" + response.data.story;
-                } else {
-                    this.storyContent = response.data.story;
-                }
+  try {
+    let response;
+    const requestPayload = {}; // Build payload dynamically
 
-                // Check if story is complete
-                this.isCompleted = response.data.complete;
-                if (this.isCompleted) {
-                    this.isEditable = true;
-                }
-
-                this.storyTellerInput = "";
-                this.error = "";
-            } catch (error) {
-                console.error("API Error:", error);
-                this.error = "Failed to generate story. Please try again.";
-            } finally {
-                this.loading = false;
-            }
-        },
-
-        async completeStory() {
-            if (!this.sessionId) {
-                this.error = "Please start a story first.";
-                return;
-            }
-
-            this.loading = true;
-            this.error = "Completing story...";
-
-            try {
-                const response = await axios.post(`${API_URL}/api/story/complete`, {
-                    session_id: this.sessionId
-                });
-
-                // Update the content with the complete story
-                this.storyContent = response.data.story;
-                this.currentIteration = response.data.iteration;
-                this.isCompleted = true;
-                this.isEditable = true;
-
-                // Add to messages
-                this.messages.push({
-                    sender: 'AI',
-                    text: "COMPLETE STORY:\n\n" + response.data.story
-                });
-
-                // Suggest using the image generator
-                setTimeout(() => {
-                    this.successMessage = "Story completed! Consider generating an image to bring your story to life.";
-                    setTimeout(() => {
-                        this.successMessage = "";
-                    }, 5000);
-                }, 1000);
-
-                this.error = "";
-            } catch (error) {
-                console.error('API Error:', error);
-                this.error = "Failed to complete story";
-            } finally {
-                this.loading = false;
-            }
-        },
-
-        async uploadToDatabase() {
-            if (!this.isCompleted || !this.isStoryNameValid) {
-                this.error = "Please complete the story and provide a valid title.";
-                return;
-            }
-
-            this.loading = true;
-            this.error = "Saving to database...";
-
-            try {
-                const response = await axios.post(`${API_URL}/api/story/save`, {
-                    user_id: this.user_id,
-                    story_name: this.storyName,
-                    story_content: this.storyContent,
-                });
-
-                if (response.status >= 200 && response.status < 300) {
-                    this.error = "";
-                    this.successMessage = `Story "${this.storyName}" saved successfully!`;
-                    setTimeout(() => {
-                        this.successMessage = "";
-                    }, 5000);
-                } else {
-                    throw new Error(`Failed to save: ${response.status} ${response.statusText}`);
-                }
-            } catch (error) {
-                console.error("API Error:", error);
-                this.error = "Failed to save story. Please try again.";
-            } finally {
-                this.loading = false;
-            }
-        },
-
-        async downloadPDF() {
-            if (!this.isCompleted) {
-                this.error = "Please complete the story first.";
-                return;
-            }
-
-            this.error = "Generating PDF...";
-
-            if (!this.storyContent.trim()) return;
-
-            this.loading = true;
-            try {
-                const response = await axios.post(`${API_URL}/api/pdf/story`, {
-                    story_name: this.storyName || "My Story",
-                    story_content: this.storyContent
-                }, {
-                    responseType: 'blob'
-                });
-
-                const url = window.URL.createObjectURL(new Blob([response.data]));
-                const link = document.createElement('a');
-                link.href = url;
-                link.setAttribute('download', `${this.storyName || 'story'}.pdf`);
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                window.URL.revokeObjectURL(url);
-                this.error = "";
-            } catch (error) {
-                console.error('API Error:', error);
-                this.error = "Failed to generate PDF. Please try again.";
-            } finally {
-                this.loading = false;
-            }
-        },
-
-        // Image dialog controls
-        openImageDialog() {
-            if (!this.isCompleted) {
-                this.error = "Please complete the story first.";
-                return;
-            }
-
-            // Pre-populate with a generic prompt suggestion
-            if (!this.imagePrompt) {
-                this.imagePrompt = "Create an image that captures the most visually interesting scene from my story.";
-            }
-
-            this.showImageDialog = true;
-        },
-
-        closeImageDialog() {
-            this.showImageDialog = false;
-        },
-
-        async generateImage() {
-            if (!this.imagePrompt.trim()) {
-                return;
-            }
-
-            this.imageGenerating = true;
-            this.closeImageDialog();
-            this.loading = true;
-            this.error = "Generating image...";
-
-            try {
-                const response = await axios.post(`${API_URL}/api/image/generate-from-story`, {
-                    story_text: this.storyContent,
-                    specific_description: this.imagePrompt
-                });
-
-                if (response.data.success) {
-                    this.generatedImage = response.data.image_url;
-                    this.imageDescription = response.data.visual_description;
-                    this.successMessage = "Image generated successfully!";
-                    setTimeout(() => {
-                        this.successMessage = "";
-                    }, 5000);
-                } else {
-                    throw new Error(response.data.message || "Failed to generate image");
-                }
-
-                this.error = "";
-            } catch (error) {
-                console.error("API Error:", error);
-                this.error = "Failed to generate image. Please try again.";
-            } finally {
-                this.imageGenerating = false;
-                this.loading = false;
-            }
-        },
-
-        resetStory() {
-            this.sessionId = null;
-            this.currentIteration = 0;
-            this.storyContent = "";
-            this.isCompleted = false;
-            this.isEditable = false;
-            this.messages = [];
-            this.messages.push({ sender: 'AI', text: this.storyPrompt });
-            this.storyTellerInput = "";
-            this.generatedImage = null;
-            this.imageDescription = "";
-        }
+    if (!sessionId.value) {
+      // Starting a new story
+      console.log('Starting new story with user_id:', userId.value);
+      requestPayload.user_id = userId.value; // Use store's userId
+      requestPayload.initial_prompt = storyTellerInput.value;
+      requestPayload.system_prompt = storyPrompt.value;
+      response = await axios.post(`/api/story/start`, requestPayload);
+      sessionId.value = response.data.session_id;
+    } else {
+      // Continuing an existing story
+      console.log('Continuing story session:', sessionId.value);
+      requestPayload.session_id = sessionId.value;
+      requestPayload.feedback = storyTellerInput.value;
+      // Backend usually associates session_id with user, no need to resend user_id here generally
+      response = await axios.post(`/api/story/continue`, requestPayload);
     }
-}
+
+    currentIteration.value = response.data.iteration;
+
+    // Update the messages display
+    messages.value.push({ sender: 'StoryTeller', text: storyTellerInput.value });
+    messages.value.push({ sender: 'AI', text: response.data.story });
+
+    // Append to storyContent for editing/saving later
+    // Let's reconstruct the full story from AI messages unless it's the final "complete" one
+    if (!response.data.complete) {
+        storyContent.value = messages.value
+            .filter(m => m.sender === 'AI') // Combine only AI responses for the full story
+            .map(m => m.text.replace(/^COMPLETE STORY:\s+/i, '')) // Remove "COMPLETE STORY:" prefix if present
+            .join("\n\n");
+    } else {
+        storyContent.value = response.data.story; // Use the explicitly completed story
+    }
+
+
+    isCompleted.value = response.data.complete;
+    if (isCompleted.value) {
+      isEditable.value = true; // Allow editing after completion
+      // Maybe add a system message indicating completion?
+       if (!messages.value.some(m => m.sender === 'System' && m.text.includes('Marked as Complete'))) {
+            messages.value.push({ sender: 'System', text: '--- Story Marked as Complete (ScrollBox content may differ) ---'});
+       }
+    }
+
+    storyTellerInput.value = ""; // Clear input field
+
+  } catch (err) {
+    console.error("API Error generating story:", err.response?.data || err.message);
+    error.value = `Failed to ${sessionId.value ? 'continue' : 'start'} story. ${err.response?.data?.error || 'Please try again.'}`;
+  } finally {
+    loading.value = false;
+  }
+};
+
+const completeStory = async () => {
+  if (!sessionId.value) {
+    error.value = "Please start a story first.";
+    successMessage.value = "";
+    return;
+  }
+  loading.value = true;
+  error.value = "";
+  successMessage.value = "";
+
+  try {
+    const response = await axios.post(`/api/story/complete`, {
+      session_id: sessionId.value
+    });
+
+    // Update the content with the *final* complete story
+    storyContent.value = response.data.story;
+    currentIteration.value = response.data.iteration;
+    isCompleted.value = true;
+    isEditable.value = true; // Allow editing after final completion
+
+    // Replace messages with just the final story for clarity, or add a marker
+    messages.value = messages.value.filter(m => m.sender !== 'System' && !m.text.startsWith('COMPLETE STORY:')); // Clear old system/complete messages
+    messages.value.push({ sender: 'AI', text: "COMPLETE STORY:\n\n" + response.data.story });
+    messages.value.push({ sender: 'System', text: '--- Story Finalized ---'});
+
+    successMessage.value = "Story completed! You can now save, download PDF, or generate an image.";
+    setTimeout(() => { successMessage.value = ""; }, 6000);
+
+  } catch (err) {
+    console.error('API Error completing story:', err.response?.data || err.message);
+    error.value = `Failed to complete story. ${err.response?.data?.error || 'Please try again.'}`;
+  } finally {
+    loading.value = false;
+  }
+};
+
+const uploadToDatabase = async () => {
+  // Check store's userId
+  if (!userId.value) {
+    error.value = "Cannot save story: User is not identified.";
+    successMessage.value = "";
+    return;
+  }
+  if (!isCompleted.value) {
+    error.value = "Please complete the story using the 'Complete Story' button before saving.";
+    successMessage.value = "";
+    return;
+  }
+  if (!isStoryNameValid.value) {
+    error.value = "Please provide a valid Story Name before saving.";
+    successMessage.value = "";
+    return;
+  }
+   if (!storyContent.value || !storyContent.value.trim()) {
+     error.value = "Cannot save empty story content.";
+     successMessage.value = "";
+     return;
+   }
+
+
+  loading.value = true;
+  error.value = "";
+  successMessage.value = "";
+
+  try {
+    console.log(`Uploading story "${storyName.value.trim()}" for user_id: ${userId.value}`);
+    // IMPORTANT: Send the *final* completed story content
+    await axios.post(`/api/story/save`, {
+      user_id: userId.value, // Use store's userId
+      story_name: storyName.value.trim(),
+      story_content: storyContent.value, // Send the final story content
+    });
+    successMessage.value = `Story "${storyName.value.trim()}" saved successfully!`;
+    setTimeout(() => { successMessage.value = ""; }, 5000);
+  } catch (err) {
+    console.error("API Error saving story:", err.response?.data || err.message);
+    error.value = `Failed to save story. ${err.response?.data?.error || 'Server error. Please try again.'}`;
+  } finally {
+    loading.value = false;
+  }
+};
+
+const downloadPDF = async () => {
+  if (!isCompleted.value) {
+    error.value = "Please complete the story first.";
+    successMessage.value = "";
+    return;
+  }
+  if (!storyContent.value || !storyContent.value.trim()) {
+    error.value = "Story content is empty, cannot generate PDF.";
+    successMessage.value = "";
+    return;
+  }
+
+  loading.value = true;
+  error.value = "";
+  successMessage.value = "";
+
+  try {
+    const storyTitle = (storyName.value || "My Story").trim();
+    // Send the *final* completed story content for the PDF
+    const response = await axios.post(`/api/pdf/story`, {
+      story_name: storyTitle,
+      story_content: storyContent.value // Use final content
+    }, {
+      responseType: 'blob' // Important for file download
+    });
+
+    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+    const link = document.createElement('a');
+    link.href = url;
+    const downloadName = `${storyTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'story'}.pdf`;
+    link.setAttribute('download', downloadName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    successMessage.value = "PDF download started.";
+    setTimeout(() => { successMessage.value = ""; }, 4000);
+
+  } catch (err) {
+    console.error('API Error generating PDF:', err.response?.data || err.message);
+    let errorMsg = "Failed to generate PDF. Please try again.";
+    try { // Try to parse error from blob if backend returns JSON error in blob
+        if (err.response?.data instanceof Blob && err.response.data.type === "application/json") {
+            const errJson = JSON.parse(await err.response.data.text());
+            errorMsg = `Failed to generate PDF: ${errJson.error || 'Server error.'}`;
+        } else if (err.response?.data?.error) {
+            errorMsg = `Failed to generate PDF: ${err.response.data.error}`;
+        }
+    } catch (parseError) { /* Ignore blob parsing errors */ }
+    error.value = errorMsg;
+  } finally {
+    loading.value = false;
+  }
+};
+
+// --- Image Methods ---
+const openImageDialog = () => {
+  if (!isCompleted.value) {
+    error.value = "Please complete the story first before generating an image.";
+    successMessage.value = "";
+    return;
+  }
+  // Suggest based on final story content
+  if (!imagePrompt.value && storyContent.value) {
+    imagePrompt.value = `Create an image depicting a key scene from the story: ${storyContent.value.substring(0, 150)}...`; // Suggest based on final story
+  } else if (!imagePrompt.value) {
+    imagePrompt.value = `Visually represent the main theme or characters of the completed story.`;
+  }
+  showImageDialog.value = true;
+  error.value = ""; // Clear errors when opening dialog
+  successMessage.value = "";
+};
+
+const closeImageDialog = () => {
+  showImageDialog.value = false;
+  // Maybe clear prompt on close?
+  // imagePrompt.value = "";
+};
+
+const generateImage = async () => {
+  if (!imagePrompt.value.trim()) { return; }
+  // Check store's userId
+  if (!userId.value) {
+    error.value = "Cannot generate image: User not identified.";
+    // Close dialog and show error?
+    // closeImageDialog();
+    return;
+  }
+   if (!isCompleted.value || !storyContent.value) {
+     error.value = "Cannot generate image: Story is not completed or content is missing.";
+     return;
+   }
+
+  imageGenerating.value = true; // Use specific loading state for image gen
+  error.value = "";
+  successMessage.value = "";
+
+  try {
+    const response = await axios.post(`/api/image/generate-from-story`, {
+      user_id: userId.value, // Use store's userId
+      story_text: storyContent.value, // Send final completed story content
+      specific_description: imagePrompt.value
+    });
+
+    if (response.data.success && response.data.image_url) {
+      generatedImage.value = response.data.image_url;
+      imageDescription.value = response.data.visual_description || imagePrompt.value; // Use generated desc or fallback to prompt
+      successMessage.value = "Image generated successfully!";
+      setTimeout(() => { successMessage.value = ""; }, 5000);
+      closeImageDialog(); // Close dialog on success
+    } else {
+      throw new Error(response.data.message || response.data.error || "Failed to generate image (unknown error)");
+    }
+  } catch (err) {
+    console.error("API Error generating image:", err.response?.data || err.message);
+    // Show error message near image generation area or globally
+    error.value = `Image generation failed: ${err.message || 'Server error. Please try again.'}`;
+    // Optionally, re-open dialog or show error within it? For now, global error.
+    // Don't close dialog on error
+  } finally {
+    imageGenerating.value = false;
+  }
+};
+
+// --- Reset Method ---
+const resetStory = () => {
+  // Keep user ID and status when resetting, clear authError if any remains
+  authStore.clearAuthError();
+
+  // Reset story-specific local state
+  sessionId.value = null;
+  currentIteration.value = 0;
+  storyContent.value = "";
+  isCompleted.value = false;
+  isEditable.value = false;
+  messages.value = [{ sender: 'AI', text: storyPrompt.value }]; // Re-add initial prompt
+  storyTellerInput.value = "";
+  generatedImage.value = null;
+  imageDescription.value = "";
+  storyName.value = "";
+  error.value = "";
+  successMessage.value = "";
+  loading.value = false; // Ensure loading state is reset
+  imageGenerating.value = false;
+  showImageDialog.value = false;
+  imagePrompt.value = ""; // Also clear image prompt
+  console.log("Story state reset.");
+};
+// ------------------
+
 </script>
 
 <style scoped>
-/* Your existing styles unchanged */
+/* Using Tailwind utilities, scoped styles might not be heavily needed */
+/* But keep custom fonts or complex styles here */
 @font-face {
     font-family: 'Didot';
     src: url('@/assets/fonts/Didot.woff2') format('woff2'),
@@ -495,7 +428,6 @@ export default {
     font-weight: normal;
     font-style: normal;
 }
-
 .font-didot {
    font-family: 'Didot', serif;
 }
@@ -571,8 +503,8 @@ textarea {
 }
 
 .spinner {
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #3498db;
+  border: 4px solid #f3f3f3; /* Light grey */
+  border-top: 4px solid #3498db; /* Blue */
   border-radius: 50%;
   width: 40px;
   height: 40px;
@@ -582,5 +514,10 @@ textarea {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+/* Add some explicit height/styles for textarea inside scrollbox if needed */
+.bg-chatbox-light textarea {
+    min-height: 200px; /* Ensure textarea takes up space */
 }
 </style>

@@ -1,351 +1,408 @@
-// CreateNarrative.vue
-<template> 
-  <div class="max-w-4xl mx-auto px-4 my-4">
-    <div class="mb-8">
-      <p class="text-lg font-didot leading-[1.2]">
-        The AI Agent will create a NARRATIVE from your previous STORIES. 
-        First, check the boxes of the stories you wish to include and click Start Narrative.
-        These stories are placed in the ScrollBox permitting you to edit them. 
-        After editing enter your contribution to the narrative in StoryTeller input. 
-        The AI agent will then add to the narrative providing new twists as it weaves the stories together. 
-        You may modify as many times as required and edit the result.
-      </p>
+<!-- CreateNarrative.vue -->
+<template>
+  <div class="max-w-4xl mx-auto px-4">
+    <h1 class="text-3xl font-didot font-bold text-center my-6">Create Narrative</h1>
+
+    <!-- User Info / Error Display -->
+    <div v-if="authIsLoading" class="text-center py-4 text-gray-600 font-didot">
+      Loading user status...
     </div>
+     <div v-else-if="!userId" class="my-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+       <span class="block sm:inline">
+         <strong class="font-bold">User Not Identified:</strong> Please go back and ensure you are logged in via Ghost. Narrative features require login.
+       </span>
+     </div>
+     <div v-else class="my-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative">
+       <span class="block sm:inline">
+         <strong class="font-bold">User:</strong> {{ authUserName || userId }}. Ready to manage narratives.
+       </span>
+     </div>
 
-    <h2 class="text-2xl font-didot mb-4">Select Stories to Include</h2>
-  
-    <!-- Stories List -->
-    <div class="bg-white rounded-lg p-6 shadow-lg mb-6">
-    <table v-if="stories.length">
-      <thead>
-        <tr>
-          <th></th>
-          <th class="story-name-header">Story Name</th>
-          <th class="story-content-header">Story</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="story in stories" :key="story.story_id">
-          <td>
-            <input type="checkbox" v-model="selectedStoryIds" :value="story.story_id">
-          </td>
-          <td class="story-name">{{ story.story_name }}</td>
-          <td class="story-content">{{ story.story }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p v-else>No stories found for this user.</p>
-    <pre>{{ stories }}</pre> <div v-if="error" class="error-message">{{ error }}</div> <p v-if="!error && stories.length === 0">No stories found for this user.</p>
-    <p class="mt-4">{{ selectedStoryIds.length }} stories selected.</p>
-  </div>
+     <!-- Loading spinner for narrative actions -->
+     <div v-if="loading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+       <div class="spinner"></div>
+     </div>
 
-    <div class="my-8">
-      <h2 class="text-2xl font-bold font-didot text-center mb-4 leading-[1.2]">
-        Instructions to Save Your Narrative and create a PDF
-      </h2>
-      <p class="text-lg font-didot text-left leading-[1.2]">
-        1) At the prompt below click the Create Narrative BUTTON. You may then EDIT your narrative in the ScrollBox.
-      </p>
-      <p class="text-lg font-didot text-left leading-[1.2]">
-        2) Enter a Narrative Name, Upload to Database, and then download a PDF.
-      </p>
-    </div>
+     <!-- Error/Success Messages -->
+     <div v-if="error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mt-4">
+       <span class="block sm:inline">{{ error }}</span>
+     </div>
+     <div v-if="successMessage" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mt-4">
+       <span class="block sm:inline">{{ successMessage }}</span>
+     </div>
 
-    <div class="flex flex-wrap items-center gap-4 my-2">
-      <label for="narrativeName" class="font-didot">Narrative Name</label>
-      <input 
-        type="text" 
-        v-model="narrativeName" 
-        id="narrativeName" 
-        placeholder="your narrative name here" 
-        class="border rounded px-3 py-2 w-48 font-didot"
-      />
-<!-- Upload to Database button -->
-<button 
-  @click="uploadToDatabase"
-  :disabled="!isCompleted || !narrativeName.trim() || narrativeName === 'Narrative Title'"
-  class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
->
-  Upload to Database
-</button>
 
-<!-- Download PDF button -->
-<button 
-  @click="downloadPDF"
-  :disabled="!isCompleted"
-  class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
->
-  Download PDF
-</button>
-
-<div class="flex flex-wrap items-center justify-between gap-4 mb-0 w-full">
-  <p class="text-lg font-didot font-bold text-left leading-[1.2]">
-    AI StoryCreator:
-  </p>
-  <!-- Start and Create Narrative button -->
-  <button 
-    @click="startNarrative"
-    :disabled="!narrativeContent.trim()"
-    class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-  >
-    Start Narrative
-  </button>
-  <button 
-    @click="createNarrative"
-    :disabled="!narrativeContent.trim()"
-    class="bg-white text-black px-4 py-2 rounded font-bold hover:bg-gray-100 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
-  >
-    Create Narrative
-  </button>
-        <div class="flex-grow text-center">
-          <p class="text-xl font-didot font-bold">ScrollBox</p>
-        </div>
-        <div class="w-[140px]"></div>
-</div>
-</div> 
-
-    <div class="bg-chatbox-light rounded-lg p-4 mb-4 min-h-[200px] max-h-[400px] overflow-y-auto">
-      <div v-if="!isEditable" v-for="(message, index) in messages" 
-          :key="index" 
-          class="mb-3">
-        <div :class="message.sender === 'AI' ? 'bg-white' : 'bg-white'" 
-            class="rounded p-3 relative">
-          <span class="text-black block" 
-                :class="message.sender === 'AI' ? 'ml-0' : ''">
-            {{ message.text }}
-          </span>
-        </div>
+    <!-- Narrative creation/display logic -->
+    <div v-if="userId"> <!-- Only show main content if user is identified -->
+      <div class="mb-6 p-4 border rounded shadow">
+          <h2 class="text-xl font-didot font-bold mb-3">Your Saved Stories</h2>
+          <div v-if="storiesLoading" class="text-center text-gray-500">Loading stories...</div>
+          <div v-else-if="userStories.length === 0" class="text-center text-gray-500">No saved stories found.</div>
+          <div v-else class="max-h-60 overflow-y-auto border p-2 rounded bg-gray-50">
+              <ul>
+                  <li v-for="story in userStories" :key="story.id" class="mb-2">
+                      <label class="flex items-center font-didot">
+                          <input
+                              type="checkbox"
+                              :value="story"
+                              v-model="selectedStories"
+                              class="mr-2"
+                          />
+                          {{ story.story_name }}
+                           <span class="text-xs text-gray-500 ml-auto"> ({{ formatDate(story.created_at) }})</span>
+                      </label>
+                  </li>
+              </ul>
+          </div>
+           <p v-if="userStories.length > 0" class="text-sm text-gray-600 mt-2">Select at least two stories to generate a narrative.</p>
       </div>
-      <textarea 
-        v-if="isEditable"
-        v-model="storyContent"
-        class="flex-1 w-full h-full min-h-[200px] max-h-[600px] bg-white text-black p-3 rounded resize-y"
-      ></textarea>
-    </div>
 
-    <div class="bg-chatbox-light rounded-lg p-4 flex gap-4 items-start">
-      <textarea 
-        v-model="narrativeInput" 
-        placeholder="StoryTeller input:"
-        rows="2"
-        class="flex-1 bg-white placeholder-black resize-y p-2 focus:outline-none"
-      ></textarea>
-      <button 
-        @click="sendNarrativeInput"
-        :disabled="!narrativeInput.trim() || loading"
-        class="bg-white text-black px-6 py-2 rounded font-bold text-lg hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Send
-      </button>
-    </div>
+       <!-- Narrative Generation -->
+       <div class="mb-6 p-4 border rounded shadow">
+            <h2 class="text-xl font-didot font-bold mb-3">Generate New Narrative</h2>
+            <div class="mb-3">
+                <label for="narrativeTheme" class="block text-sm font-medium text-gray-700 mb-1">Optional Theme:</label>
+                <input
+                    type="text"
+                    id="narrativeTheme"
+                    v-model="narrativeTheme"
+                    placeholder="e.g., Overcoming fear, The power of friendship"
+                    class="w-full border rounded px-3 py-2 font-didot"
+                />
+            </div>
+            <button
+                @click="generateNarrative"
+                :disabled="selectedStories.length < 2 || loading"
+                class="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 font-didot disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                Generate Narrative from Selected
+            </button>
+       </div>
 
-    <div v-if="error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
-      <span class="block sm:inline">{{ error }}</span>
-    </div>
+       <!-- Generated Narrative Display & Save -->
+        <div v-if="generatedNarrativeContent" class="mb-6 p-4 border rounded shadow bg-yellow-50">
+            <h2 class="text-xl font-didot font-bold mb-3">Generated Narrative</h2>
+             <textarea
+                 v-model="generatedNarrativeContent"
+                 rows="10"
+                 class="w-full border rounded p-2 font-didot bg-white mb-3"
+             ></textarea>
+             <div class="flex flex-wrap items-center gap-4">
+                 <label for="narrativeName" class="font-didot">Narrative Name:</label>
+                 <input
+                     type="text"
+                     id="narrativeName"
+                     v-model="narrativeName"
+                     placeholder="Enter a name for this narrative"
+                     class="border rounded px-3 py-2 flex-grow font-didot"
+                  />
+                 <button
+                     @click="saveNarrative"
+                     :disabled="!narrativeName.trim() || loading"
+                     class="bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 font-didot disabled:opacity-50"
+                  >
+                     Save Narrative
+                 </button>
+                  <button
+                     @click="downloadNarrativePDF"
+                     :disabled="!narrativeName.trim() || loading"
+                     class="bg-gray-600 text-white px-4 py-2 rounded font-bold hover:bg-gray-700 font-didot disabled:opacity-50"
+                  >
+                     Download PDF
+                 </button>
+             </div>
+        </div>
+
+       <!-- Saved Narratives List -->
+        <div class="mb-6 p-4 border rounded shadow">
+             <h2 class="text-xl font-didot font-bold mb-3">Your Saved Narratives</h2>
+             <div v-if="narrativesLoading" class="text-center text-gray-500">Loading narratives...</div>
+             <div v-else-if="userNarratives.length === 0" class="text-center text-gray-500">No saved narratives found.</div>
+             <ul v-else>
+                 <li v-for="narrative in userNarratives" :key="narrative.id" class="mb-2 p-2 border-b">
+                     <p class="font-bold font-didot">{{ narrative.narrative_name }}</p>
+                     <p class="text-sm text-gray-600 font-didot">Created: {{ formatDate(narrative.created_at) }}</p>
+                     <p class="text-sm text-gray-600 font-didot">Sources: {{ narrative.source_stories?.join(', ') || 'N/A' }}</p>
+                     <!-- Add buttons to view/edit/delete/download PDF narrative if needed -->
+                 </li>
+             </ul>
+        </div>
+
+    </div> <!-- End v-if="userId" -->
+
   </div>
 </template>
 
-<script>
+<script setup>
+import { ref, onMounted, computed } from 'vue'; // computed might be useful later
 import axios from 'axios';
-import api from '../services/api';
+import { useAuthStore } from '@/stores/auth'; // Import the auth store
+import { storeToRefs } from 'pinia';       // Import storeToRefs
 
-export default {
-  name: 'CreateNarrative',
-  data() {
-    return {
-      narrativeContent: "",
-      narrativeName: "",
-      userId: 1,
-      stories: [],
-      selectedStoryIds: [],
-      selectedStories: [],
-      messages: [{ sender: 'AI', text: `Creating a narrative from selected stories. The AI will weave together the elements into a cohesive narrative with new twists. You may modify as needed.` }],
-      narrativeInput: "",
-      loading: false,
-      error: "",
-      user_id: 1,
-      isEditable: false,
-      isCompleted: false,
-      settingsVersion: 1,
-      saveStatus: null, // Add saveStatus to data
+// API URL setup
+const API_URL = import.meta.env.VITE_APP_API_URL || 'http://127.0.0.1:5000';
+axios.defaults.baseURL = API_URL;
 
-    };
-  },
-  mounted() {
-    axios.defaults.baseURL = import.meta.env.VITE_APP_API_URL;
-    console.log("Component mounted. User ID:", this.userId);  // Verify userId
-    this.fetchStories();
-  },
-  methods: {
-    async fetchStories() {
-        this.error = ""; // Clear previous errors
-        try {
-            const response = await axios.get(`/get_user_stories?user_id=${this.userId}&t=${Date.now()}`);
-            if (Array.isArray(response.data)) {  // Check if data is array
-                this.stories = response.data;
+// --- Pinia Auth Store ---
+const authStore = useAuthStore();
+const {
+    userId, // Reactive ref to the user ID from the store
+    userName: authUserName, // Use alias if needed
+    isLoading: authIsLoading, // Loading state from auth store (for initial check)
+    // You can also get getters like isAuthenticated if needed
+    // isAuthenticated
+} = storeToRefs(authStore);
+// ------------------------
 
-            } else {
-                this.stories = []; // Set stories to an empty array if not an array.  Handle the case where an error was returned but wrapped in a 200 response
-                this.error = "Invalid stories data. Please check the logs."
-                console.error("Invalid stories data:", response.data)
-            }
+// --- Local Component State ---
+const userStories = ref([]);
+const selectedStories = ref([]); // Stores the full story objects selected
+const userNarratives = ref([]);
+const narrativeTheme = ref("");
+const narrativeName = ref("");
+const generatedNarrativeContent = ref("");
 
+// Loading states for different actions
+const loading = ref(false); // General loading for generate/save/pdf actions
+const storiesLoading = ref(false);
+const narrativesLoading = ref(false);
 
-        } catch (error) {
-            this.stories = []  // Clear the stories array if there's an error
-            console.error("Error fetching stories:", error);
-            this.error = "Failed to fetch stories. Please try again.";
-        }
-    },
-    async startNarrative() {
-      this.isEditable = false;
-      this.messages = [];  // Clear previous messages
-      this.narrativeContent = ""; // Clear the narrative content
-      try {
-        if (!this.selectedStories || this.selectedStories.length === 0) {
-               this.error = "Please select at least one story.";
-               return;
-        }
-        const storiesText = this.selectedStories.map(story => story.story).join('\n\n'); // Combine selected stories
-        const response = await api.generateNarrative(storiesText);  // Pass combined stories text to API
-        this.narrativeContent = response.data.narrative;
-        this.messages.push({ sender: 'AI', text: response.data.narrative });
-        this.isEditable = true;
-      } catch (error) {
-        this.error = "Failed to start narrative. Please try again.";
-        console.error(error);
-      }
-    },
-    async createNarrative() {
-        try {
-          if (!this.narrativeContent.trim()) {
-             this.error = "Narrative content cannot be empty.";
-             return; // Or throw an error
-           }
+// Error/Success messages
+const error = ref(null);
+const successMessage = ref(null);
+// ---------------------------
 
-            // Assuming you have an API route for /complete_narrative
-           const response = await axios.post('/complete_narrative', {
-                narrative_content: this.narrativeContent,
-                settings_version: this.settingsVersion, // Assuming you need this
-                // ... any other required parameters
-           });
-            this.narrativeContent = response.data.narrative // Assign response
-           this.isEditable = true;
-            this.isCompleted = true;
+// --- Methods ---
 
-        } catch (error) {
-            console.error("Error completing narrative:", error)
-            this.error = "Failed to complete narrative."; // Or display specific error
-        }
-    },
-    async sendNarrativeInput() {
-            if (!this.narrativeInput.trim()) return;
-
-            this.loading = true;
-            this.error = ""; // Clear any previous errors
-
-            try {
-                this.messages.push({ sender: 'StoryTeller', text: this.narrativeInput });
-
-                const response = await api.updateNarrative({ // Use API wrapper, send settingsVersion
-                    user_id: this.user_id,
-                    narrative_input: this.narrativeInput,
-                    current_narrative: this.narrativeContent,
-                    selected_stories: this.selectedStories,
-                    settings_version: this.settingsVersion,
-                });
-
-                this.messages.push({ sender: 'AI', text: response.narrative });  // Use response.narrative
-                this.narrativeContent = response.narrative; // Update narrativeContent
-                this.narrativeInput = "";
-            } catch (error) {
-                console.error("Error updating narrative:", error);
-                this.error = "Failed to update narrative. Please try again.";
-            } finally {
-                this.loading = false;
-            }
-    },
-    async uploadToDatabase() {
-       try {
-            if (!this.narrativeContent || !this.narrativeName) {
-                this.error = "Please create a narrative and enter a name before uploading.";
-                return;
-            }
-
-            const response = await api.uploadNarrative({
-                user_id: this.user_id,
-                narrative_name: this.narrativeName,
-                narrative_content: this.narrativeContent,
-                source_stories: this.selectedStoryIds, // Or this.selectedStories if needed
-            });
-
-            this.saveStatus = true; // Set saveStatus to true on success
-            setTimeout(() => {
-                this.saveStatus = false;
-            }, 3000);
-        } catch (error) {
-            console.error("Error uploading narrative:", error);
-            this.error = "Failed to upload narrative. Please try again."; // Provide feedback to the user
-        }
-
-    },
-    async downloadPDF() {   
-            if (!this.narrativeContent) {
-                this.error = "Please create a narrative before downloading a PDF.";
-                return;
-            }
-            try {
-                const pdfContent = await api.downloadNarrativePDF({
-                    narrative_name: this.narrativeName,
-                    narrative_content: this.narrativeContent,
-                    selected_stories: this.selectedStories,
-                });
-
-                // Create a download link
-                const link = document.createElement('a');
-                const blob = new Blob([pdfContent], { type: 'application/pdf' });
-                const url = URL.createObjectURL(blob)
-
-                link.href = url
-                link.download = `${this.narrativeName}.pdf` // Or a default name
-                link.click() // Trigger download
-
-                URL.revokeObjectURL(url) // Release memory
-
-            } catch (error) {
-                console.error("Error downloading PDF:", error);
-                this.error = "Failed to download PDF. Please try again."; // Or handle error as needed
-
-            }
-    },
-    updateSelectedStories() {
-      this.selectedStories = this.stories.filter(story => this.selectedStoryIds.includes(story.story_id));
-    },
-  },
-    watch: { // The watch remains as it was: correct and necessary
-        selectedStoryIds: {
-            handler() {
-                this.updateSelectedStories(); // Correct call to update selected stories
-            },
-            immediate: true, // Ensures initial filtering when stories are loaded
-            deep: true,
-
-        },
-    },
+// Helper to clear messages
+const clearMessages = () => {
+    error.value = null;
+    successMessage.value = null;
 };
-</script>
+
+// Helper to format dates
+const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+        // Basic formatting, consider using a library like date-fns for more robust parsing/formatting
+        return new Date(dateString).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch (e) {
+        console.warn("Error formatting date:", dateString, e);
+        return dateString; // Fallback to original string
+    }
+};
+
+// Fetch stories specific to the logged-in user
+const fetchUserStories = async () => {
+    // Guard clause: ensure userId from store is available
+    if (!userId.value) {
+        console.warn("fetchUserStories: No user ID found in store. Skipping fetch.");
+        error.value = "Cannot load stories: User not identified.";
+        userStories.value = []; // Ensure list is empty if no user
+        return;
+    }
+    storiesLoading.value = true;
+    clearMessages();
+    try {
+        console.log(`Fetching stories for user_id: ${userId.value}`);
+        const response = await axios.get(`/api/story/user`, {
+            params: { user_id: userId.value } // Pass user ID as query param
+        });
+        // Assuming backend returns an array, default to empty array if not
+        userStories.value = Array.isArray(response.data) ? response.data : [];
+    } catch (err) {
+        console.error("API Error fetching stories:", err.response?.data || err.message);
+        error.value = `Failed to load stories. ${err.response?.data?.error || 'Please try again.'}`;
+        userStories.value = []; // Clear stories on error
+    } finally {
+        storiesLoading.value = false;
+    }
+};
+
+// Fetch narratives specific to the logged-in user
+const fetchUserNarratives = async () => {
+    // Guard clause: ensure userId from store is available
+     if (!userId.value) {
+        console.warn("fetchUserNarratives: No user ID found in store. Skipping fetch.");
+        error.value = "Cannot load narratives: User not identified.";
+        userNarratives.value = [];
+        return;
+    }
+    narrativesLoading.value = true;
+    clearMessages();
+    try {
+        console.log(`Fetching narratives for user_id: ${userId.value}`);
+        const response = await axios.get(`/api/narrative/user`, {
+            params: { user_id: userId.value }
+        });
+        userNarratives.value = Array.isArray(response.data) ? response.data : [];
+    } catch (err) {
+        console.error("API Error fetching narratives:", err.response?.data || err.message);
+        error.value = `Failed to load narratives. ${err.response?.data?.error || 'Please try again.'}`;
+        userNarratives.value = [];
+    } finally {
+        narrativesLoading.value = false;
+    }
+};
+
+// Generate a narrative from selected stories
+const generateNarrative = async () => {
+    if (selectedStories.value.length < 2) {
+        error.value = "Please select at least two stories to generate a narrative.";
+        successMessage.value = "";
+        return;
+    }
+    // Check user ID again, although page load should handle this generally
+    if (!userId.value) { error.value="User not identified."; return; }
+
+    loading.value = true;
+    clearMessages();
+    generatedNarrativeContent.value = ""; // Clear previous generation
+
+    try {
+        console.log(`Generating narrative from ${selectedStories.value.length} stories for user ${userId.value}`);
+        const response = await axios.post('/api/narrative/generate', {
+            // Backend might need user_id here too for tracking/limits
+            // user_id: userId.value,
+            selected_stories: selectedStories.value.map(s => ({ // Send relevant story data
+                id: s.id,
+                story_name: s.story_name,
+                content: s.story_content // Send content if backend needs it for generation
+            })),
+            narrative_theme: narrativeTheme.value
+        });
+        generatedNarrativeContent.value = response.data.narrative;
+        // Optionally pre-fill narrative name
+        narrativeName.value = `Narrative based on ${response.data.source_stories?.slice(0, 2).join(' and ') || 'Selected Stories'}`;
+        successMessage.value = "Narrative generated successfully! Review and save below.";
+        setTimeout(() => { successMessage.value = ""; }, 5000);
+
+    } catch (err) {
+        console.error("API Error generating narrative:", err.response?.data || err.message);
+        error.value = `Failed to generate narrative. ${err.response?.data?.error || 'Please try again.'}`;
+    } finally {
+        loading.value = false;
+    }
+};
+
+// Save the currently generated narrative
+const saveNarrative = async () => {
+    // Guard clauses
+    if (!userId.value) { error.value = "Cannot save: User not identified."; return; }
+    if (!narrativeName.value.trim()) { error.value = "Please enter a name for the narrative."; return; }
+    if (!generatedNarrativeContent.value || !generatedNarrativeContent.value.trim()) { error.value = "No narrative content to save."; return; }
+
+    loading.value = true;
+    clearMessages();
+
+    try {
+        // Get source story names from the selection *that was used for generation*
+        // This assumes selectedStories still holds the stories used for the current generatedNarrativeContent
+        const sourceStoryNames = selectedStories.value.map(s => s.story_name);
+
+        console.log(`Saving narrative "${narrativeName.value.trim()}" for user ${userId.value}`);
+        await axios.post('/api/narrative/save', {
+            user_id: userId.value, // Use user ID from store
+            narrative_name: narrativeName.value.trim(),
+            narrative_content: generatedNarrativeContent.value,
+            source_stories: sourceStoryNames // Send the names of the source stories
+        });
+        successMessage.value = `Narrative "${narrativeName.value.trim()}" saved successfully!`;
+        setTimeout(() => { successMessage.value = ""; }, 5000);
+
+        // Refresh the list of saved narratives after successful save
+        await fetchUserNarratives();
+
+        // Clear the generated fields and selection after saving
+        generatedNarrativeContent.value = "";
+        narrativeName.value = "";
+        selectedStories.value = []; // Clear selection for next cycle
+        narrativeTheme.value = "";
+
+    } catch (err) {
+        console.error("API Error saving narrative:", err.response?.data || err.message);
+        error.value = `Failed to save narrative. ${err.response?.data?.error || 'Please try again.'}`;
+    } finally {
+        loading.value = false;
+    }
+};
+
+// Download the currently generated narrative as PDF
+const downloadNarrativePDF = async () => {
+     // Guard clauses
+     if (!userId.value) { error.value = "Cannot download PDF: User not identified."; return; }
+     if (!narrativeName.value.trim()) { error.value = "Please enter a Narrative Name before downloading."; return; }
+     if (!generatedNarrativeContent.value || !generatedNarrativeContent.value.trim()) { error.value = "Narrative content is empty, cannot generate PDF."; return; }
+
+     loading.value = true;
+     clearMessages();
+
+     try {
+          const narrativeTitle = narrativeName.value.trim();
+          // Get source names from the stories used for the current generation
+          const sourceStoryNames = selectedStories.value.map(s => s.story_name);
+
+          console.log(`Generating PDF for narrative "${narrativeTitle}"`);
+          const response = await axios.post(`/api/pdf/narrative`, {
+                narrative_name: narrativeTitle,
+                narrative_content: generatedNarrativeContent.value,
+                source_stories: sourceStoryNames // Send source story names if needed for PDF header/footer
+             }, { responseType: 'blob' });
+
+          // Blob download logic
+          const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+          const link = document.createElement('a');
+          link.href = url;
+          const downloadName = `${narrativeTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'narrative'}.pdf`;
+          link.setAttribute('download', downloadName);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          successMessage.value = "Narrative PDF download started.";
+          setTimeout(() => { successMessage.value = ""; }, 4000);
+
+     } catch (err) {
+          console.error('API Error generating narrative PDF:', err.response?.data || err.message);
+          // Improved error handling for blob responses might be needed here too
+          error.value = "Failed to generate narrative PDF.";
+     } finally {
+          loading.value = false;
+     }
+};
+
+// --- Lifecycle Hook ---
+onMounted(() => {
+  console.log("CreateNarrative component mounted.");
+  // Fetch initial data ONLY if user ID is available from the store immediately
+  // This handles the case where the user navigates directly here *after*
+  // having already been identified via CreateStory
+  if (userId.value) {
+    console.log("User ID found in store on mount, fetching data...");
+    fetchUserStories();
+    fetchUserNarratives();
+  } else {
+    // If the store is still loading user info, we might need to watch for changes,
+    // but typically navigation guards or the initial load message handle this.
+    console.warn("CreateNarrative mounted, but no user ID in auth store yet. Data fetching skipped initially.");
+    // The template's v-if="!userId" will show the appropriate message.
+  }
+});
+
+</script
 
 <style scoped>
+/* Using Tailwind utilities, scoped styles might not be heavily needed */
+/* But keep custom fonts or complex styles here */
 @font-face {
-  font-family: 'Didot';
-  src: url('@/assets/fonts/Didot.woff2') format('woff2'),
-       url('@/assets/fonts/Didot.woff') format('woff');
-  font-weight: normal;
-  font-style: normal;
+    font-family: 'Didot';
+    src: url('@/assets/fonts/Didot.woff2') format('woff2'),
+        url('@/assets/fonts/Didot.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
 }
-
 .font-didot {
-  font-family: 'Didot', serif;
+   font-family: 'Didot', serif;
 }
 .error-message {
   color: red;
@@ -364,5 +421,30 @@ export default {
   white-space: pre-line; /* Preserve whitespace and line breaks */
   word-break: break-word; /* Wrap long words */
   max-width: 75%;         /* Takes 3/4 width */
+}
+.loading-spinner {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.spinner {
+  border: 4px solid #f3f3f3; /* Light grey */
+  border-top: 4px solid #3498db; /* Blue */
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Add some explicit height/styles for textarea inside scrollbox if needed */
+.bg-chatbox-light textarea {
+    min-height: 200px; /* Ensure textarea takes up space */
 }
 </style>
