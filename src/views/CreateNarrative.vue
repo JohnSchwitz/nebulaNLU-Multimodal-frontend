@@ -389,7 +389,7 @@ onMounted(() => {
   }
 });
 
-</script
+</script>
 
 <style scoped>
 /* Using Tailwind utilities, scoped styles might not be heavily needed */

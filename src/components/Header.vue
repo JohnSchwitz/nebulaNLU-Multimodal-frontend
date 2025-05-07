@@ -12,6 +12,7 @@
                     <router-link to="/create-story">Create Story</router-link>
                     <router-link to="/create-narrative">Create Narrative</router-link>
                     <router-link to="/create-picture" class="hover:underline">Create Picture</router-link>
+                    <router-link to="/download">Download Stories & Pictures</router-link>
                 </nav>
               </div>
             </div>

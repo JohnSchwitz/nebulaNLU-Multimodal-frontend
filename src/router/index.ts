@@ -33,6 +33,11 @@ const routes = [
     component: ExampleStory
   },
   {
+    path: '/download', // <-- Your new route
+    name: 'DownloadUserData',
+    component: DownloadPage
+  },
+  {
     path: '/admin-login',
     name: 'AdminLogin',
     component: AdminLogin
