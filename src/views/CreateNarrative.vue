@@ -134,25 +134,23 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'; // computed might be useful later
-import axios from 'axios';
-import { useAuthStore } from '@/stores/auth'; // Import the auth store
-import { storeToRefs } from 'pinia';       // Import storeToRefs
-
-// API URL setup
-const API_URL = import.meta.env.VITE_APP_API_URL || 'http://127.0.0.1:5000';
-axios.defaults.baseURL = API_URL;
+import { ref, onMounted, computed, watch } from 'vue';
+// Use the correct import for your api service
+import api from '@/services/api'; // Use the refactored api.ts
+import { useAuthStore } from '@/stores/auth'; // Ensure this points to auth.ts (no extension needed)
+import { storeToRefs } from 'pinia';
+import { saveAs } from 'file-saver'; // Import saveAs for PDF download
 
 // --- Pinia Auth Store ---
 const authStore = useAuthStore();
+// Get needed reactive state and getters
 const {
-    userId, // Reactive ref to the user ID from the store
-    userName: authUserName, // Use alias if needed
-    isLoading: authIsLoading, // Loading state from auth store (for initial check)
-    // You can also get getters like isAuthenticated if needed
-    // isAuthenticated
+    userId,
+    userName: authUserName,
+    isLoading: authIsLoading,
+    isAuthenticated, // Use this getter
+    error: authError // Get error state too
 } = storeToRefs(authStore);
-// ------------------------
 
 // --- Local Component State ---
 const userStories = ref([]);
@@ -161,59 +159,52 @@ const userNarratives = ref([]);
 const narrativeTheme = ref("");
 const narrativeName = ref("");
 const generatedNarrativeContent = ref("");
-
-// Loading states for different actions
 const loading = ref(false); // General loading for generate/save/pdf actions
 const storiesLoading = ref(false);
 const narrativesLoading = ref(false);
-
-// Error/Success messages
-const error = ref(null);
+const error = ref(null); // Local error state for this component's actions
 const successMessage = ref(null);
-// ---------------------------
 
 // --- Methods ---
 
-// Helper to clear messages
+// Helper to clear local messages
 const clearMessages = () => {
     error.value = null;
     successMessage.value = null;
 };
 
-// Helper to format dates
-const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
+// Helper to format dates (keep as is)
+const formatDate = (dateInput) => {
+    if (!dateInput) return 'N/A';
     try {
-        // Basic formatting, consider using a library like date-fns for more robust parsing/formatting
-        return new Date(dateString).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        // Handle potential Firestore Timestamp objects or date strings
+        const date = dateInput.toDate ? dateInput.toDate() : new Date(dateInput);
+        return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
     } catch (e) {
-        console.warn("Error formatting date:", dateString, e);
-        return dateString; // Fallback to original string
+        console.warn("Error formatting date:", dateInput, e);
+        return String(dateInput); // Fallback
     }
 };
 
 // Fetch stories specific to the logged-in user
 const fetchUserStories = async () => {
-    // Guard clause: ensure userId from store is available
-    if (!userId.value) {
-        console.warn("fetchUserStories: No user ID found in store. Skipping fetch.");
-        error.value = "Cannot load stories: User not identified.";
-        userStories.value = []; // Ensure list is empty if no user
+    // *** MODIFICATION: Rely on isAuthenticated from store ***
+    if (!isAuthenticated.value) {
+        console.warn("fetchUserStories: User not authenticated. Skipping fetch.");
+        userStories.value = [];
         return;
     }
     storiesLoading.value = true;
     clearMessages();
     try {
-        console.log(`Fetching stories for user_id: ${userId.value}`);
-        const response = await axios.get(`/api/story/user`, {
-            params: { user_id: userId.value } // Pass user ID as query param
-        });
-        // Assuming backend returns an array, default to empty array if not
-        userStories.value = Array.isArray(response.data) ? response.data : [];
+        console.log(`Fetching stories for authenticated user...`);
+        // *** MODIFICATION: Call API without userId param ***
+        const responseData = await api.getUserStories();
+        userStories.value = Array.isArray(responseData) ? responseData : [];
     } catch (err) {
-        console.error("API Error fetching stories:", err.response?.data || err.message);
-        error.value = `Failed to load stories. ${err.response?.data?.error || 'Please try again.'}`;
-        userStories.value = []; // Clear stories on error
+        console.error("API Error fetching stories:", err);
+        error.value = `Failed to load stories. ${err.message || 'Please try again.'}`;
+        userStories.value = [];
     } finally {
         storiesLoading.value = false;
     }
@@ -221,24 +212,22 @@ const fetchUserStories = async () => {
 
 // Fetch narratives specific to the logged-in user
 const fetchUserNarratives = async () => {
-    // Guard clause: ensure userId from store is available
-     if (!userId.value) {
-        console.warn("fetchUserNarratives: No user ID found in store. Skipping fetch.");
-        error.value = "Cannot load narratives: User not identified.";
+    // *** MODIFICATION: Rely on isAuthenticated from store ***
+     if (!isAuthenticated.value) {
+        console.warn("fetchUserNarratives: User not authenticated. Skipping fetch.");
         userNarratives.value = [];
         return;
     }
     narrativesLoading.value = true;
     clearMessages();
     try {
-        console.log(`Fetching narratives for user_id: ${userId.value}`);
-        const response = await axios.get(`/api/narrative/user`, {
-            params: { user_id: userId.value }
-        });
-        userNarratives.value = Array.isArray(response.data) ? response.data : [];
+        console.log(`Fetching narratives for authenticated user...`);
+         // *** MODIFICATION: Call API without userId param ***
+        const responseData = await api.getUserNarratives();
+        userNarratives.value = Array.isArray(responseData) ? responseData : [];
     } catch (err) {
-        console.error("API Error fetching narratives:", err.response?.data || err.message);
-        error.value = `Failed to load narratives. ${err.response?.data?.error || 'Please try again.'}`;
+        console.error("API Error fetching narratives:", err);
+        error.value = `Failed to load narratives. ${err.message || 'Please try again.'}`;
         userNarratives.value = [];
     } finally {
         narrativesLoading.value = false;
@@ -247,39 +236,34 @@ const fetchUserNarratives = async () => {
 
 // Generate a narrative from selected stories
 const generateNarrative = async () => {
+    // *** MODIFICATION: Rely on isAuthenticated from store ***
+    if (!isAuthenticated.value) { error.value = "Please log in to generate narratives."; return; }
     if (selectedStories.value.length < 2) {
-        error.value = "Please select at least two stories to generate a narrative.";
-        successMessage.value = "";
+        error.value = "Please select at least two stories.";
+        successMessage.value = null; // Use null instead of ""
         return;
     }
-    // Check user ID again, although page load should handle this generally
-    if (!userId.value) { error.value="User not identified."; return; }
-
     loading.value = true;
     clearMessages();
-    generatedNarrativeContent.value = ""; // Clear previous generation
+    generatedNarrativeContent.value = null; // Use null instead of ""
 
     try {
-        console.log(`Generating narrative from ${selectedStories.value.length} stories for user ${userId.value}`);
-        const response = await axios.post('/api/narrative/generate', {
-            // Backend might need user_id here too for tracking/limits
-            // user_id: userId.value,
-            selected_stories: selectedStories.value.map(s => ({ // Send relevant story data
-                id: s.id,
-                story_name: s.story_name,
-                content: s.story_content // Send content if backend needs it for generation
-            })),
-            narrative_theme: narrativeTheme.value
-        });
-        generatedNarrativeContent.value = response.data.narrative;
-        // Optionally pre-fill narrative name
-        narrativeName.value = `Narrative based on ${response.data.source_stories?.slice(0, 2).join(' and ') || 'Selected Stories'}`;
-        successMessage.value = "Narrative generated successfully! Review and save below.";
-        setTimeout(() => { successMessage.value = ""; }, 5000);
+        console.log(`Generating narrative from ${selectedStories.value.length} stories...`);
+        // Prepare payload (ensure content is included if needed by backend)
+         const storiesForPayload = selectedStories.value.map(s => ({
+             story_id: s.story_id, // Assuming your story object has story_id
+             content: s.story || s.story_content || '' // Adjust based on story object structure
+         }));
+
+        const responseData = await api.generateNarrative(storiesForPayload); // Pass structured data
+        generatedNarrativeContent.value = responseData.narrative;
+        narrativeName.value = `Narrative based on ${responseData.source_stories?.slice(0, 2).join(' and ') || 'Selected Stories'}`;
+        successMessage.value = "Narrative generated! Review and save below.";
+        setTimeout(() => { successMessage.value = null; }, 5000);
 
     } catch (err) {
-        console.error("API Error generating narrative:", err.response?.data || err.message);
-        error.value = `Failed to generate narrative. ${err.response?.data?.error || 'Please try again.'}`;
+        console.error("API Error generating narrative:", err);
+        error.value = `Failed to generate narrative. ${err.message || 'Please try again.'}`;
     } finally {
         loading.value = false;
     }
@@ -287,41 +271,38 @@ const generateNarrative = async () => {
 
 // Save the currently generated narrative
 const saveNarrative = async () => {
-    // Guard clauses
-    if (!userId.value) { error.value = "Cannot save: User not identified."; return; }
-    if (!narrativeName.value.trim()) { error.value = "Please enter a name for the narrative."; return; }
-    if (!generatedNarrativeContent.value || !generatedNarrativeContent.value.trim()) { error.value = "No narrative content to save."; return; }
+    // *** MODIFICATION: Rely on isAuthenticated from store ***
+    if (!isAuthenticated.value) { error.value = "Please log in to save narratives."; return; }
+    if (!narrativeName.value.trim()) { error.value = "Please enter a name."; return; }
+    if (!generatedNarrativeContent.value?.trim()) { error.value = "No content to save."; return; }
 
     loading.value = true;
     clearMessages();
 
     try {
-        // Get source story names from the selection *that was used for generation*
-        // This assumes selectedStories still holds the stories used for the current generatedNarrativeContent
-        const sourceStoryNames = selectedStories.value.map(s => s.story_name);
-
-        console.log(`Saving narrative "${narrativeName.value.trim()}" for user ${userId.value}`);
-        await axios.post('/api/narrative/save', {
-            user_id: userId.value, // Use user ID from store
+        const sourceStoryIds = selectedStories.value.map(s => s.story_id); // Send IDs
+        const narrativeData = {
             narrative_name: narrativeName.value.trim(),
             narrative_content: generatedNarrativeContent.value,
-            source_stories: sourceStoryNames // Send the names of the source stories
-        });
-        successMessage.value = `Narrative "${narrativeName.value.trim()}" saved successfully!`;
-        setTimeout(() => { successMessage.value = ""; }, 5000);
+            source_stories: sourceStoryIds
+            // *** MODIFICATION: REMOVE user_id from payload ***
+        };
 
-        // Refresh the list of saved narratives after successful save
-        await fetchUserNarratives();
+        console.log(`Saving narrative "${narrativeData.narrative_name}"...`);
+        await api.saveNarrative(narrativeData); // API call doesn't need userId
+        successMessage.value = `Narrative "${narrativeData.narrative_name}" saved!`;
+        setTimeout(() => { successMessage.value = null; }, 5000);
 
-        // Clear the generated fields and selection after saving
-        generatedNarrativeContent.value = "";
+        await fetchUserNarratives(); // Refresh list
+
+        generatedNarrativeContent.value = null;
         narrativeName.value = "";
-        selectedStories.value = []; // Clear selection for next cycle
+        selectedStories.value = [];
         narrativeTheme.value = "";
 
     } catch (err) {
-        console.error("API Error saving narrative:", err.response?.data || err.message);
-        error.value = `Failed to save narrative. ${err.response?.data?.error || 'Please try again.'}`;
+        console.error("API Error saving narrative:", err);
+        error.value = `Failed to save narrative. ${err.message || 'Please try again.'}`;
     } finally {
         loading.value = false;
     }
@@ -329,64 +310,68 @@ const saveNarrative = async () => {
 
 // Download the currently generated narrative as PDF
 const downloadNarrativePDF = async () => {
-     // Guard clauses
-     if (!userId.value) { error.value = "Cannot download PDF: User not identified."; return; }
-     if (!narrativeName.value.trim()) { error.value = "Please enter a Narrative Name before downloading."; return; }
-     if (!generatedNarrativeContent.value || !generatedNarrativeContent.value.trim()) { error.value = "Narrative content is empty, cannot generate PDF."; return; }
+     // *** MODIFICATION: Rely on isAuthenticated from store ***
+     if (!isAuthenticated.value) { error.value = "Please log in to download."; return; }
+     if (!narrativeName.value.trim()) { error.value = "Please enter a Narrative Name."; return; }
+     if (!generatedNarrativeContent.value?.trim()) { error.value = "No content to download."; return; }
 
      loading.value = true;
      clearMessages();
 
      try {
           const narrativeTitle = narrativeName.value.trim();
-          // Get source names from the stories used for the current generation
-          const sourceStoryNames = selectedStories.value.map(s => s.story_name);
+          const sourceStoryNames = selectedStories.value.map(s => s.story_name); // Names for PDF content
 
           console.log(`Generating PDF for narrative "${narrativeTitle}"`);
-          const response = await axios.post(`/api/pdf/narrative`, {
-                narrative_name: narrativeTitle,
-                narrative_content: generatedNarrativeContent.value,
-                source_stories: sourceStoryNames // Send source story names if needed for PDF header/footer
-             }, { responseType: 'blob' });
+          // *** MODIFICATION: Call API without userId ***
+          const blob = await api.getNarrativePdf(
+                narrativeTitle,
+                generatedNarrativeContent.value,
+                sourceStoryNames
+             );
 
-          // Blob download logic
-          const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-          const link = document.createElement('a');
-          link.href = url;
-          const downloadName = `${narrativeTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'narrative'}.pdf`;
-          link.setAttribute('download', downloadName);
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(url);
+          saveAs(blob, `${narrativeTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'narrative'}.pdf`);
           successMessage.value = "Narrative PDF download started.";
-          setTimeout(() => { successMessage.value = ""; }, 4000);
+          setTimeout(() => { successMessage.value = null; }, 4000);
 
      } catch (err) {
-          console.error('API Error generating narrative PDF:', err.response?.data || err.message);
-          // Improved error handling for blob responses might be needed here too
-          error.value = "Failed to generate narrative PDF.";
+          console.error('API Error generating narrative PDF:', err);
+          error.value = `Failed to generate narrative PDF. ${err.message || ''}`;
      } finally {
           loading.value = false;
      }
 };
 
-// --- Lifecycle Hook ---
+// --- Lifecycle Hook & Watcher ---
 onMounted(() => {
   console.log("CreateNarrative component mounted.");
-  // Fetch initial data ONLY if user ID is available from the store immediately
-  // This handles the case where the user navigates directly here *after*
-  // having already been identified via CreateStory
-  if (userId.value) {
-    console.log("User ID found in store on mount, fetching data...");
+  // *** MODIFICATION: Fetch based on isAuthenticated ***
+  if (isAuthenticated.value) {
+    console.log("User authenticated on mount, fetching initial data...");
     fetchUserStories();
     fetchUserNarratives();
   } else {
-    // If the store is still loading user info, we might need to watch for changes,
-    // but typically navigation guards or the initial load message handle this.
-    console.warn("CreateNarrative mounted, but no user ID in auth store yet. Data fetching skipped initially.");
-    // The template's v-if="!userId" will show the appropriate message.
+    console.warn("CreateNarrative mounted, but user not authenticated in store yet.");
   }
+});
+
+// Add watcher similar to DownloadPage to fetch data if user logs in *after* mount
+watch(isAuthenticated, (isAuth, wasAuth) => {
+    if (isAuth === true && wasAuth === false) {
+        console.log("CreateNarrative: User became authenticated. Fetching data.");
+        fetchUserStories();
+        fetchUserNarratives();
+    }
+     if (isAuth === false && wasAuth === true) {
+         console.log("CreateNarrative: User logged out. Clearing data.");
+         userStories.value = [];
+         userNarratives.value = [];
+         selectedStories.value = [];
+         generatedNarrativeContent.value = null;
+         narrativeName.value = "";
+         narrativeTheme.value = "";
+         clearMessages();
+     }
 });
 
 </script>

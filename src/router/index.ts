@@ -4,6 +4,7 @@ import CreateStory from '../views/CreateStory.vue'
 import CreateNarrative from '../views/CreateNarrative.vue'
 import CreatePicture from '../views/CreatePicture.vue'
 import ExampleStory from '../views/ExampleStory.vue'
+import DownloadPage from '../views/DownloadPage.vue'
 import AdminView from '../admin/views/AdminView.vue'
 import AdminLogin from '../admin/views/AdminLogin.vue'
 
@@ -33,8 +34,8 @@ const routes = [
     component: ExampleStory
   },
   {
-    path: '/download', // <-- Your new route
-    name: 'DownloadUserData',
+    path: '/download',
+    name: 'DownloadPage',
     component: DownloadPage
   },
   {

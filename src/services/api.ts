@@ -1,4 +1,4 @@
-// src/api.ts
+// src/services/api.ts
 import axios from 'axios';
 
 // Use environment variable for API URL, provide a sensible default for local dev

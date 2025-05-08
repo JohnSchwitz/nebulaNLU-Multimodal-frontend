@@ -23,6 +23,7 @@
   "dependencies": {
     "@vee-validate/rules": "^4.15.0",
     "axios": "^1.7.9",
+    "file-saver": "^2.0.5",
     "pinia": "^3.0.2",
     "vee-validate": "^4.5.8",
     "vue": "^3.5.13",

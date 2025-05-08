@@ -9,17 +9,17 @@
     </div>
     <div v-else-if="!isAuthenticated" class="error-message">
       <p>Please log in via Ghost to access this page.</p>
-      <!-- Optional: Add a link/button back to Ghost sign-in -->
+
     </div>
     <div v-else-if="authError" class="error-message">
        <p>Authentication error: {{ authError }}</p>
     </div>
 
     <!-- Main content shown only when authenticated and auth check done -->
+
     <div v-else>
         <div v-if="isLoading" class="loading-indicator">
         <p>Loading your data for user ID: {{ userId }}...</p>
-        <!-- Add a spinner or visual indicator here -->
         </div>
 
         <div v-if="error" class="error-message">
@@ -31,6 +31,7 @@
             <p>Note: Currently, images need to be downloaded individually via provided links (if available) or require future backend support for bulk/direct download.</p>
 
             <!-- Stories Section -->
+<!--
             <section class="download-section">
                 <h2>Stories ({{ stories.length }})</h2>
                 <ul v-if="stories.length > 0">
@@ -47,8 +48,9 @@
                 </ul>
                 <p v-else>No stories found.</p>
             </section>
-
+-->
             <!-- Narratives Section -->
+<!--
             <section class="download-section">
                 <h2>Narratives ({{ narratives.length }})</h2>
                 <ul v-if="narratives.length > 0">
@@ -65,8 +67,9 @@
                 </ul>
                 <p v-else>No narratives found.</p>
             </section>
-
+-->
             <!-- Images Section -->
+<!--
             <section class="download-section">
                 <h2>Images ({{ images.length }})</h2>
                 <p class="note">Image download requires backend support for Signed URLs or direct download.</p>
@@ -91,8 +94,9 @@
                 </ul>
                 <p v-else>No images found.</p>
             </section>
-
+-->
             <!-- Download Button -->
+<!--
             <div class="download-actions">
                 <button
                     @click="handleBulkDownload"
@@ -104,6 +108,7 @@
                 <p v-if="!hasSelection" class="note">Please select items to download.</p>
                 <p class="note">Bulk download currently not supported. Please use individual download buttons.</p>
             </div>
+-->
         </div>
     </div>
 
@@ -112,39 +117,31 @@
 
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
-import apiService from '@/api'; // Adjust path as needed
-import { saveAs } from 'file-saver'; // npm install file-saver
-// *** START MODIFICATION: Import Pinia Store ***
-import { useAuthStore } from '@/stores/auth'; // <-- Adjust path to your auth store
+import api from '@/services/api';
+import { saveAs } from 'file-saver';
+import { useAuthStore } from '@/stores/auth';
 import { storeToRefs } from 'pinia';
-// *** END MODIFICATION ***
 
 // --- State ---
 const stories = ref([]);
 const narratives = ref([]);
 const images = ref([]);
-
 const selectedStoryIds = ref([]);
 const selectedNarrativeIds = ref([]);
 const selectedImageIds = ref([]);
-
-const isLoading = ref(true); // For data fetching state
-const error = ref(null);     // For data fetching errors
+const isLoading = ref(true);
+const error = ref(null);
 const isDownloading = ref(false);
 const isFetchingSignedUrl = ref(null);
 
 // --- Pinia Auth Store ---
 const authStore = useAuthStore();
-// Make state properties reactive using storeToRefs
 const {
-    userId, // <-- Use this for user context
-    // userStatus: authUserStatus, // Keep if needed for display/logic
-    // userName: authUserName,    // Keep if needed for display/logic
+    userId,
     error: authError,
-    isLoading: authIsLoading, // Use this for initial auth check state
-    isAuthenticated // Use this getter for conditional rendering
+    isLoading: authIsLoading,
+    isAuthenticated
 } = storeToRefs(authStore);
-// ------------------------
 
 // --- Computed ---
 const hasSelection = computed(() => {
@@ -155,54 +152,45 @@ const hasSelection = computed(() => {
 
 // --- Methods ---
 const fetchData = async () => {
-  // *** START MODIFICATION: Check userId from store ***
-  // We rely on the isAuthenticated getter now for the main conditional render,
-  // but we log the userId we're using. The actual user is identified
-  // by the auth token sent by apiService.
-  if (!userId.value) {
-      console.warn("FetchData called but userId from authStore is not available yet.");
-      // Error handling might be done based on isAuthenticated instead
-      // error.value = "User identifier not found in auth state.";
-      // isLoading.value = false;
-      return; // Wait for auth state to be ready (handled by watch or v-if)
+  if (!userId.value && isAuthenticated.value) { // Check if authenticated but ID is missing somehow
+      console.warn("FetchData: User authenticated but userId from store is missing.");
+      // Maybe fetch user profile first? Or rely on token alone if backend allows
   }
-  // *** END MODIFICATION ***
+  if (!isAuthenticated.value) { // Don't fetch if not authenticated
+       return;
+  }
 
-  console.log(`Fetching data for user ID (from store): ${userId.value}`); // Log which user we think we are
+  console.log(`Fetching data for user associated with current token...`);
   isLoading.value = true;
   error.value = null;
 
   try {
-    // Calls remain the same - apiService handles sending the necessary auth token
+    // *** FIX: Use 'api' instead of 'apiService' ***
     const [storiesRes, narrativesRes, imagesRes] = await Promise.all([
-      apiService.getUserStories(),
-      apiService.getUserNarratives(),
-      apiService.getUserImages()
+      api.getUserStories(),
+      api.getUserNarratives(),
+      api.getUserImages()
     ]);
-
     stories.value = Array.isArray(storiesRes) ? storiesRes : [];
     narratives.value = Array.isArray(narrativesRes) ? narrativesRes : [];
     images.value = Array.isArray(imagesRes) ? imagesRes.map(img => ({ ...img, downloadUrl: null })) : [];
-
   } catch (err) {
     console.error("Error fetching user data:", err);
     error.value = err.message || 'Failed to load data from the server.';
      if (err.response?.status === 401) {
         error.value = "Authentication failed. Please log in again via Ghost.";
-        // Optionally trigger authStore.logout() or redirect
     }
   } finally {
     isLoading.value = false;
   }
 };
 
-// --- Individual Download Functions (No changes needed here, they use API service) ---
-
 const downloadStoryPdf = async (story) => {
     if (!story?.story_id || !story?.story_content) { alert('Invalid story data.'); return; }
     console.log(`Requesting PDF for story: ${story.story_name}`);
     try {
-        const blob = await apiService.getStoryPdf(story.story_name, story.story_content);
+        // *** FIX: Use 'api' instead of 'apiService' ***
+        const blob = await api.getStoryPdf(story.story_name, story.story_content);
         saveAs(blob, `${story.story_name.replace(/[^a-z0-9]/gi, '_') || 'story'}.pdf`);
     } catch (err) {
         console.error(`Error downloading story PDF (${story.story_id}):`, err);
@@ -214,7 +202,8 @@ const downloadNarrativePdf = async (narrative) => {
      if (!narrative?.narrative_id || !narrative?.narrative_content) { alert('Invalid narrative data.'); return; }
      console.log(`Requesting PDF for narrative: ${narrative.narrative_name}`);
      try {
-        const blob = await apiService.getNarrativePdf(narrative.narrative_name, narrative.narrative_content, narrative.source_stories);
+        // *** FIX: Use 'api' instead of 'apiService' ***
+        const blob = await api.getNarrativePdf(narrative.narrative_name, narrative.narrative_content, narrative.source_stories);
         saveAs(blob, `${narrative.narrative_name.replace(/[^a-z0-9]/gi, '_') || 'narrative'}.pdf`);
     } catch (err) {
         console.error(`Error downloading narrative PDF (${narrative.narrative_id}):`, err);
@@ -227,7 +216,8 @@ const downloadImage = async (image) => {
     console.log(`Requesting download URL for image: ${image.image_title} (ID: ${image.image_id})`);
     isFetchingSignedUrl.value = image.image_id;
     try {
-        const signedUrl = await apiService.getImageDownloadUrl(image.image_id); // API service sends auth
+        // *** FIX: Use 'api' instead of 'apiService' ***
+        const signedUrl = await api.getImageDownloadUrl(image.image_id);
         if (signedUrl) {
             const imgIndex = images.value.findIndex(img => img.image_id === image.image_id);
             if (imgIndex > -1) images.value[imgIndex].downloadUrl = signedUrl;
@@ -243,47 +233,29 @@ const downloadImage = async (image) => {
     }
 };
 
-// --- Bulk Download (Placeholder - No changes needed here) ---
 const handleBulkDownload = () => {
-  // ... (implementation remains a placeholder) ...
-   alert("Bulk download is not yet implemented. Please use the individual download buttons/links for now.");
+   alert("Bulk download is not yet implemented.");
 };
 
 // --- Lifecycle Hooks ---
 onMounted(() => {
-  // *** START MODIFICATION: Fetch data only if authenticated ***
-  // Initial check
   if (isAuthenticated.value) {
-      console.log("DownloadPage: User is authenticated on mount. Fetching data.");
       fetchData();
   } else {
-      console.log("DownloadPage: User is not authenticated on mount. Waiting for auth state.");
-      isLoading.value = false; // Stop data loading indicator, show auth message instead
+      isLoading.value = false;
   }
-  // *** END MODIFICATION ***
 });
 
-// *** START MODIFICATION: Watch for authentication changes ***
-// If the user logs in *after* the component mounts, fetch data then.
 watch(isAuthenticated, (newValue, oldValue) => {
   if (newValue === true && oldValue === false) {
-    console.log("DownloadPage: User became authenticated after mount. Fetching data.");
     fetchData();
   }
-  // Optional: Handle logout while on the page
   if(newValue === false && oldValue === true) {
-      console.log("DownloadPage: User logged out.");
-      // Clear data
-      stories.value = [];
-      narratives.value = [];
-      images.value = [];
-      selectedStoryIds.value = [];
-      selectedNarrativeIds.value = [];
-      selectedImageIds.value = [];
-      error.value = null; // Clear previous errors
+      stories.value = []; narratives.value = []; images.value = [];
+      selectedStoryIds.value = []; selectedNarrativeIds.value = []; selectedImageIds.value = [];
+      error.value = null;
   }
 });
-// *** END MODIFICATION ***
 
 </script>
 
