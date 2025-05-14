@@ -135,60 +135,46 @@
 
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
-// Use the correct import for your api service
-import api from '@/services/api'; // Use the refactored api.ts
-import { useAuthStore } from '@/stores/auth'; // Ensure this points to auth.ts (no extension needed)
+import api from '@/services/api';
+import { useAuthStore } from '@/stores/auth';
 import { storeToRefs } from 'pinia';
-import { saveAs } from 'file-saver'; // Import saveAs for PDF download
+import { saveAs } from 'file-saver';
 
-// --- Pinia Auth Store ---
 const authStore = useAuthStore();
-// Get needed reactive state and getters
 const {
-    userId,
+    userId, // Still useful for conditional UI or if some non-API logic needs it
     userName: authUserName,
     isLoading: authIsLoading,
-    isAuthenticated, // Use this getter
-    error: authError // Get error state too
+    isAuthenticated,
+    error: authError
 } = storeToRefs(authStore);
 
-// --- Local Component State ---
 const userStories = ref([]);
-const selectedStories = ref([]); // Stores the full story objects selected
+const selectedStories = ref([]);
 const userNarratives = ref([]);
 const narrativeTheme = ref("");
 const narrativeName = ref("");
 const generatedNarrativeContent = ref("");
-const loading = ref(false); // General loading for generate/save/pdf actions
+const loading = ref(false);
 const storiesLoading = ref(false);
 const narrativesLoading = ref(false);
-const error = ref(null); // Local error state for this component's actions
+const error = ref(null);
 const successMessage = ref(null);
 
-// --- Methods ---
+const clearMessages = () => { error.value = null; successMessage.value = null; };
 
-// Helper to clear local messages
-const clearMessages = () => {
-    error.value = null;
-    successMessage.value = null;
-};
-
-// Helper to format dates (keep as is)
 const formatDate = (dateInput) => {
     if (!dateInput) return 'N/A';
     try {
-        // Handle potential Firestore Timestamp objects or date strings
         const date = dateInput.toDate ? dateInput.toDate() : new Date(dateInput);
         return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
     } catch (e) {
         console.warn("Error formatting date:", dateInput, e);
-        return String(dateInput); // Fallback
+        return String(dateInput);
     }
 };
 
-// Fetch stories specific to the logged-in user
 const fetchUserStories = async () => {
-    // *** MODIFICATION: Rely on isAuthenticated from store ***
     if (!isAuthenticated.value) {
         console.warn("fetchUserStories: User not authenticated. Skipping fetch.");
         userStories.value = [];
@@ -198,7 +184,7 @@ const fetchUserStories = async () => {
     clearMessages();
     try {
         console.log(`Fetching stories for authenticated user...`);
-        // *** MODIFICATION: Call API without userId param ***
+        // MODIFICATION: Call API without userId param, backend uses token
         const responseData = await api.getUserStories();
         userStories.value = Array.isArray(responseData) ? responseData : [];
     } catch (err) {
@@ -210,9 +196,7 @@ const fetchUserStories = async () => {
     }
 };
 
-// Fetch narratives specific to the logged-in user
 const fetchUserNarratives = async () => {
-    // *** MODIFICATION: Rely on isAuthenticated from store ***
      if (!isAuthenticated.value) {
         console.warn("fetchUserNarratives: User not authenticated. Skipping fetch.");
         userNarratives.value = [];
@@ -222,7 +206,7 @@ const fetchUserNarratives = async () => {
     clearMessages();
     try {
         console.log(`Fetching narratives for authenticated user...`);
-         // *** MODIFICATION: Call API without userId param ***
+        // MODIFICATION: Call API without userId param, backend uses token
         const responseData = await api.getUserNarratives();
         userNarratives.value = Array.isArray(responseData) ? responseData : [];
     } catch (err) {
@@ -234,30 +218,31 @@ const fetchUserNarratives = async () => {
     }
 };
 
-// Generate a narrative from selected stories
 const generateNarrative = async () => {
-    // *** MODIFICATION: Rely on isAuthenticated from store ***
-    if (!isAuthenticated.value) { error.value = "Please log in to generate narratives."; return; }
-    if (selectedStories.value.length < 2) {
-        error.value = "Please select at least two stories.";
-        successMessage.value = null; // Use null instead of ""
-        return;
-    }
+    if (!isAuthenticated.value) { error.value = "Please log in."; return; }
+    if (selectedStories.value.length < 2) { error.value = "Please select at least two stories."; return; }
+
     loading.value = true;
     clearMessages();
-    generatedNarrativeContent.value = null; // Use null instead of ""
+    generatedNarrativeContent.value = null;
 
     try {
-        console.log(`Generating narrative from ${selectedStories.value.length} stories...`);
-        // Prepare payload (ensure content is included if needed by backend)
-         const storiesForPayload = selectedStories.value.map(s => ({
-             story_id: s.story_id, // Assuming your story object has story_id
-             content: s.story || s.story_content || '' // Adjust based on story object structure
-         }));
+        const storiesForPayload = selectedStories.value.map(s => ({
+             story_id: s.id || s.story_id, // Adjust based on your story object structure
+             content: s.story_content || s.story || '' // Adjust based on story object structure
+        }));
 
-        const responseData = await api.generateNarrative(storiesForPayload); // Pass structured data
+        const payload = {
+            selected_stories: storiesForPayload,
+            narrative_theme: narrativeTheme.value || undefined
+        };
+
+        console.log(`Generating narrative with theme: "${payload.narrative_theme}"`);
+        const responseData = await api.generateNarrative(payload);
+
         generatedNarrativeContent.value = responseData.narrative;
-        narrativeName.value = `Narrative based on ${responseData.source_stories?.slice(0, 2).join(' and ') || 'Selected Stories'}`;
+        const sourceIds = responseData.source_stories || selectedStories.value.map(s => s.id || s.story_id);
+        narrativeName.value = `Narrative from ${sourceIds.slice(0, 2).join(' and ')}`;
         successMessage.value = "Narrative generated! Review and save below.";
         setTimeout(() => { successMessage.value = null; }, 5000);
 
@@ -269,10 +254,8 @@ const generateNarrative = async () => {
     }
 };
 
-// Save the currently generated narrative
 const saveNarrative = async () => {
-    // *** MODIFICATION: Rely on isAuthenticated from store ***
-    if (!isAuthenticated.value) { error.value = "Please log in to save narratives."; return; }
+    if (!isAuthenticated.value) { error.value = "Please log in."; return; }
     if (!narrativeName.value.trim()) { error.value = "Please enter a name."; return; }
     if (!generatedNarrativeContent.value?.trim()) { error.value = "No content to save."; return; }
 
@@ -280,20 +263,20 @@ const saveNarrative = async () => {
     clearMessages();
 
     try {
-        const sourceStoryIds = selectedStories.value.map(s => s.story_id); // Send IDs
+        const sourceStoryIds = selectedStories.value.map(s => s.id || s.story_id);
         const narrativeData = {
             narrative_name: narrativeName.value.trim(),
             narrative_content: generatedNarrativeContent.value,
             source_stories: sourceStoryIds
-            // *** MODIFICATION: REMOVE user_id from payload ***
         };
 
         console.log(`Saving narrative "${narrativeData.narrative_name}"...`);
-        await api.saveNarrative(narrativeData); // API call doesn't need userId
+        await api.saveNarrative(narrativeData);
+
         successMessage.value = `Narrative "${narrativeData.narrative_name}" saved!`;
         setTimeout(() => { successMessage.value = null; }, 5000);
 
-        await fetchUserNarratives(); // Refresh list
+        await fetchUserNarratives();
 
         generatedNarrativeContent.value = null;
         narrativeName.value = "";
@@ -308,10 +291,8 @@ const saveNarrative = async () => {
     }
 };
 
-// Download the currently generated narrative as PDF
 const downloadNarrativePDF = async () => {
-     // *** MODIFICATION: Rely on isAuthenticated from store ***
-     if (!isAuthenticated.value) { error.value = "Please log in to download."; return; }
+     if (!isAuthenticated.value) { error.value = "Please log in."; return; }
      if (!narrativeName.value.trim()) { error.value = "Please enter a Narrative Name."; return; }
      if (!generatedNarrativeContent.value?.trim()) { error.value = "No content to download."; return; }
 
@@ -320,15 +301,16 @@ const downloadNarrativePDF = async () => {
 
      try {
           const narrativeTitle = narrativeName.value.trim();
-          const sourceStoryNames = selectedStories.value.map(s => s.story_name); // Names for PDF content
+          const sourceStoryNames = selectedStories.value.map(s => s.story_name || `Story ${s.id || s.story_id}`);
+
+          const payload = {
+              narrative_name: narrativeTitle,
+              narrative_content: generatedNarrativeContent.value,
+              source_stories: sourceStoryNames
+          };
 
           console.log(`Generating PDF for narrative "${narrativeTitle}"`);
-          // *** MODIFICATION: Call API without userId ***
-          const blob = await api.getNarrativePdf(
-                narrativeTitle,
-                generatedNarrativeContent.value,
-                sourceStoryNames
-             );
+          const blob = await api.generateNarrativePDF(payload);
 
           saveAs(blob, `${narrativeTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'narrative'}.pdf`);
           successMessage.value = "Narrative PDF download started.";
@@ -342,20 +324,17 @@ const downloadNarrativePDF = async () => {
      }
 };
 
-// --- Lifecycle Hook & Watcher ---
 onMounted(() => {
   console.log("CreateNarrative component mounted.");
-  // *** MODIFICATION: Fetch based on isAuthenticated ***
   if (isAuthenticated.value) {
     console.log("User authenticated on mount, fetching initial data...");
     fetchUserStories();
     fetchUserNarratives();
   } else {
-    console.warn("CreateNarrative mounted, but user not authenticated in store yet.");
+    console.warn("CreateNarrative mounted, user not authenticated yet. Waiting for auth state change.");
   }
 });
 
-// Add watcher similar to DownloadPage to fetch data if user logs in *after* mount
 watch(isAuthenticated, (isAuth, wasAuth) => {
     if (isAuth === true && wasAuth === false) {
         console.log("CreateNarrative: User became authenticated. Fetching data.");
@@ -364,16 +343,15 @@ watch(isAuthenticated, (isAuth, wasAuth) => {
     }
      if (isAuth === false && wasAuth === true) {
          console.log("CreateNarrative: User logged out. Clearing data.");
-         userStories.value = [];
-         userNarratives.value = [];
-         selectedStories.value = [];
-         generatedNarrativeContent.value = null;
-         narrativeName.value = "";
-         narrativeTheme.value = "";
-         clearMessages();
+          userStories.value = [];
+          userNarratives.value = [];
+          selectedStories.value = [];
+          generatedNarrativeContent.value = null;
+          narrativeName.value = "";
+          narrativeTheme.value = "";
+          clearMessages();
      }
 });
-
 </script>
 
 <style scoped>
