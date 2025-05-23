@@ -33,31 +33,6 @@ const apiClient = axios.create({
 // Request Interceptor: Adds the Authorization token to requests
 apiClient.interceptors.request.use(
   (config: AxiosRequestConfig): AxiosRequestConfig => { // Explicitly type config
-    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
-    if (token) {
-      if (!config.headers) { // Ensure headers object exists
-          config.headers = {};
-      }
-      config.headers.Authorization = `Bearer ${token}`;
-      // console.debug('Auth token added to request headers.'); // Uncomment for debugging
-    } else {
-      // This logs if no token is found, which is expected if user is not logged in
-      // or if the token exchange hasn't happened yet.
-      // console.warn(`Auth token not found in localStorage for request to: ${config.url}`);
-    }
-    return config;
-  },
-  (error) => {
-    console.error('Axios request interceptor error:', error);
-    return Promise.reject(error);
-  }
-);
-
-// Response Interceptor: Handles global error logging and specific statuses like 401
-// src/services/api.ts
-// ...
-apiClient.interceptors.request.use(
-  (config: AxiosRequestConfig): AxiosRequestConfig => {
     const tokenFromStorage = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
     console.log(`[API Interceptor] Attempting to get token from localStorage with key '${AUTH_TOKEN_STORAGE_KEY}'. Found: ${tokenFromStorage ? tokenFromStorage.substring(0,30)+'...' : 'null'}`);
 
@@ -72,12 +47,28 @@ apiClient.interceptors.request.use(
     }
     return config;
   },
-  // ...
+  (error) => {
+    console.error('Axios request interceptor error:', error);
+    return Promise.reject(error);
+  }
+);
+
+// Response Interceptor: Handles global error logging
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response) {
+      console.error(`API Error: ${error.response.status} ${error.response.statusText}`, error.response.data);
+    } else if (error.request) {
+      console.error('API Network Error:', error.request);
+    } else {
+      console.error('API Request Setup Error:', error.message);
+    }
+    return Promise.reject(error);
+  }
 );
 
 // --- TypeScript Interfaces for Payloads and Responses ---
-// (These match the interfaces from your provided api.ts, slightly adjusted for clarity)
-
 interface StorySegmentResponse {
   session_id: string;
   story: string;
@@ -104,51 +95,74 @@ interface NarrativeResponse {
   source_stories?: string[]; // Assuming these are story IDs or names
 }
 
+// Updated interfaces with user_id
 interface StartStoryPayload {
   initial_prompt: string;
+  user_id: string;
 }
 
 interface ContinueStoryPayload {
   session_id: string;
   feedback: string;
+  user_id: string;
+}
+
+interface CompleteStoryPayload {
+  session_id: string;
+  user_id: string;
 }
 
 interface SaveStoryPayload {
   story_name: string;
   story_content: string;
   sessionId?: string | null; // sessionId is optional for saving if not part of a session
+  user_id: string;
 }
 
 interface GenerateNarrativePayload {
   selected_stories: { story_id: string; content: string }[];
   narrative_theme?: string;
+  user_id: string;
 }
 
 interface SaveNarrativePayload {
   narrative_name: string;
   narrative_content: string;
   source_stories: string[]; // Story IDs
+  user_id: string;
+}
+
+interface PdfStoryPayload {
+  story_name: string;
+  story_content: string;
+  user_id: string;
+}
+
+interface PdfNarrativePayload {
+  narrative_name: string;
+  narrative_content: string;
+  source_stories: string[];
+  user_id: string;
 }
 
 // For the Ghost Token Exchange
 interface GhostAuthPayload {
   ghost_user_id: string;
 }
+
 interface AuthTokenResponse {
   token: string;
   // Potentially other user details if your backend returns them
 }
-
 
 // --- API Method Definitions ---
 const api = {
   // == Ghost User Authentication with Backend ==
   async authenticateGhostUser(data: GhostAuthPayload): Promise<AuthTokenResponse> {
     try {
-      // This endpoint needs to exist on your backend (e.g., /api/auth/ghost-token)
       const response: AxiosResponse<AuthTokenResponse> = await apiClient.post(`/api/auth/ghost-token`, data);
-      return response.data; // Expected: { token: "jwt_token_string" }
-    } catch (error) {
+      return response.data;
+    } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Backend authentication with Ghost ID failed');
     }
   },
@@ -156,56 +170,58 @@ const api = {
   // == Story Methods (Session-Based) ==
   async startStory(data: StartStoryPayload): Promise<StorySegmentResponse> {
     try {
-      const response: AxiosResponse<StorySegmentResponse> = await apiClient.post(`/api/story/start`, data);
+      const response: AxiosResponse<StorySegmentResponse> = await apiClient.post('/api/story/start', data);
       return response.data;
-    } catch (error) {
-      throw new Error(error.response?.data?.error || 'Failed to start story session');
+    } catch (error: any) {
+      console.error("API Error in startStory:", error);
+      throw new Error(error.response?.data?.error || 'Failed to start story');
     }
   },
 
   async continueStory(data: ContinueStoryPayload): Promise<StorySegmentResponse> {
     try {
-      const response: AxiosResponse<StorySegmentResponse> = await apiClient.post(`/api/story/continue`, data);
+      const response: AxiosResponse<StorySegmentResponse> = await apiClient.post('/api/story/continue', data);
       return response.data;
-    } catch (error) {
-      throw new Error(error.response?.data?.error || 'Failed to continue story session');
+    } catch (error: any) {
+      console.error("API Error in continueStory:", error);
+      throw new Error(error.response?.data?.error || 'Failed to continue story');
     }
   },
 
-  async completeStory(sessionId: string): Promise<FinalStoryResponse> {
+  async completeStory(data: CompleteStoryPayload): Promise<FinalStoryResponse> {
     try {
-      const response: AxiosResponse<FinalStoryResponse> = await apiClient.post(`/api/story/complete`, { session_id: sessionId });
+      const response: AxiosResponse<FinalStoryResponse> = await apiClient.post('/api/story/complete', data);
       return response.data;
-    } catch (error) {
-      throw new Error(error.response?.data?.error || 'Failed to complete story session');
+    } catch (error: any) {
+      console.error("API Error in completeStory:", error);
+      throw new Error(error.response?.data?.error || 'Failed to complete story');
     }
   },
 
   // == Story Persistence ==
   async saveStory(data: SaveStoryPayload): Promise<SaveResponse> {
     try {
-      // Backend expects story_name, story_content. User identification via token.
       const payloadToBackend = {
-          story_name: data.story_name,
-          story_content: data.story_content,
-          // sessionId is optional, pass if available and backend uses it.
-          ...(data.sessionId && { session_id: data.sessionId })
+        story_name: data.story_name,
+        story_content: data.story_content,
+        user_id: data.user_id,
+        ...(data.sessionId && { session_id: data.sessionId })
       };
+
       const response: AxiosResponse<SaveResponse> = await apiClient.post(`/api/story/save`, payloadToBackend);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Failed to save story');
     }
   },
 
-  // `userId` param removed as backend should use token for identification
-  async getUserStories(): Promise<any[]> {
+  async getUserStories(userId: string): Promise<any[]> {
     try {
-      // Path from main.py (uses token)
-      const response = await apiClient.get(`/api/user/stories`);
+      const response = await apiClient.get(`/api/user/stories?user_id=${encodeURIComponent(userId)}`);
       return Array.isArray(response.data) ? response.data : [];
-    } catch (error) {
-      return []; // Return an empty array on error
+    } catch (error: any) {
+      console.error('Error fetching user stories:', error);
+      return [];
     }
   },
 
@@ -214,41 +230,39 @@ const api = {
     try {
       const response: AxiosResponse<NarrativeResponse> = await apiClient.post(`/api/narrative/generate`, data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Failed to generate narrative');
     }
   },
 
   async saveNarrative(data: SaveNarrativePayload): Promise<SaveResponse> {
     try {
-      // User identification via token
       const response: AxiosResponse<SaveResponse> = await apiClient.post(`/api/narrative/save`, data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Failed to save narrative');
     }
   },
 
-  // `userId` param removed as backend should use token for identification
-  async getUserNarratives(): Promise<any[]> {
+  async getUserNarratives(userId: string): Promise<any[]> {
     try {
-      // Path from main.py (uses token)
-      const response = await apiClient.get(`/api/narrative/user`);
+      const response = await apiClient.get(`/api/narrative/user?user_id=${encodeURIComponent(userId)}`);
       return Array.isArray(response.data) ? response.data : [];
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Error fetching user narratives:', error);
       return [];
     }
   },
 
   // == PDF Methods ==
-  async generateStoryPDF(data: { story_name: string; story_content: string }): Promise<Blob> {
+  async generateStoryPDF(data: PdfStoryPayload): Promise<Blob> {
     try {
       const response = await apiClient.post('/api/pdf/story', data, { responseType: 'blob' });
       if (!(response.data instanceof Blob)) {
         throw new Error("Invalid PDF response data from server.");
       }
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       const errMessage = "Failed to download story PDF.";
       if (error.response && error.response.data instanceof Blob) {
         try {
@@ -260,16 +274,16 @@ const api = {
     }
   },
 
-  async generateNarrativePDF(data: { narrative_name: string; narrative_content: string; source_stories: string[] }): Promise<Blob> {
+  async generateNarrativePDF(data: PdfNarrativePayload): Promise<Blob> {
     try {
       const response = await apiClient.post('/api/pdf/narrative', data, { responseType: 'blob' });
       if (!(response.data instanceof Blob)) {
         throw new Error("Invalid PDF response data from server.");
       }
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       const errMessage = "Failed to download narrative PDF.";
-       if (error.response && error.response.data instanceof Blob) {
+      if (error.response && error.response.data instanceof Blob) {
         try {
           const errJson = JSON.parse(await error.response.data.text());
           throw new Error(errJson.error || errMessage);
@@ -280,26 +294,52 @@ const api = {
   },
 
   // == Admin Settings ==
-  async getAdminSettings(): Promise<any> {
+  async getAdminSettings(userId: string): Promise<any> {
     try {
-      const response = await apiClient.get(`/api/admin/settings`);
+      const response = await apiClient.get(`/api/admin/settings?user_id=${encodeURIComponent(userId)}`);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Failed to fetch admin settings');
     }
   },
 
-  async saveAdminSettings(settings: any): Promise<any> {
+  async saveAdminSettings(settings: any & { user_id: string }): Promise<any> {
     try {
       const response = await apiClient.post(`/api/admin/settings`, settings);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Failed to save admin settings');
     }
   },
 
-  // You can add other API methods from your services/api.js as needed
-  // (e.g., for Image management, Story History, etc.)
+  // == Image Methods (if implemented) ==
+  async generateImageFromStory(data: { prompt: string; user_id: string }): Promise<any> {
+    try {
+      const response = await apiClient.post('/api/image/generate-from-story', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || 'Failed to generate image');
+    }
+  },
+
+  async saveImage(data: { image_url: string; metadata: any; user_id: string }): Promise<any> {
+    try {
+      const response = await apiClient.post('/api/image/save', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || 'Failed to save image');
+    }
+  },
+
+  async getUserImages(userId: string): Promise<any[]> {
+    try {
+      const response = await apiClient.get(`/api/image/user?user_id=${encodeURIComponent(userId)}`);
+      return Array.isArray(response.data) ? response.data : [];
+    } catch (error: any) {
+      console.error('Error fetching user images:', error);
+      return [];
+    }
+  }
 };
 
 export default api;

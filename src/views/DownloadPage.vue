@@ -31,7 +31,7 @@
             <p>Note: Currently, images need to be downloaded individually via provided links (if available) or require future backend support for bulk/direct download.</p>
 
             <!-- Stories Section -->
-<!--
+
             <section class="download-section">
                 <h2>Stories ({{ stories.length }})</h2>
                 <ul v-if="stories.length > 0">
@@ -48,26 +48,7 @@
                 </ul>
                 <p v-else>No stories found.</p>
             </section>
--->
-            <!-- Narratives Section -->
-<!--
-            <section class="download-section">
-                <h2>Narratives ({{ narratives.length }})</h2>
-                <ul v-if="narratives.length > 0">
-                <li v-for="narrative in narratives" :key="narrative.narrative_id">
-                    <input
-                    type="checkbox"
-                    :id="'narrative-' + narrative.narrative_id"
-                    :value="narrative.narrative_id"
-                    v-model="selectedNarrativeIds"
-                    />
-                    <label :for="'narrative-' + narrative.narrative_id">{{ narrative.narrative_name }}</label>
-                    <button @click="downloadNarrativePdf(narrative)" class="btn-download-item">Download PDF</button>
-                </li>
-                </ul>
-                <p v-else>No narratives found.</p>
-            </section>
--->
+
             <!-- Images Section -->
 <!--
             <section class="download-section">
@@ -96,7 +77,7 @@
             </section>
 -->
             <!-- Download Button -->
-<!--
+
             <div class="download-actions">
                 <button
                     @click="handleBulkDownload"
@@ -108,7 +89,7 @@
                 <p v-if="!hasSelection" class="note">Please select items to download.</p>
                 <p class="note">Bulk download currently not supported. Please use individual download buttons.</p>
             </div>
--->
+
         </div>
     </div>
 
@@ -165,12 +146,22 @@ const fetchData = async () => {
   error.value = null;
 
   try {
-    // *** FIX: Use 'api' instead of 'apiService' ***
-    const [storiesRes, narrativesRes, imagesRes] = await Promise.all([
-      api.getUserStories(),
-      api.getUserNarratives(),
-      api.getUserImages()
-    ]);
+  if (!isAuthenticated.value || !userId.value) {
+      logger.warn("DownloadPage: User not authenticated or userId missing, cannot fetch data.");
+      error.value = "User not authenticated. Please log in.";
+      isLoading.value = false; // Stop loading indicator
+      return; // Exit early
+  }
+
+  // Now we know userId.value is available
+  const currentUserId = userId.value; // Use a local const for clarity in Promise.all
+
+  logger.info(`[DownloadPage] Fetching data for user ID: ${currentUserId}`);
+  const [storiesRes, narrativesRes, imagesRes] = await Promise.all([
+    api.getUserStories(currentUserId),      // Pass userId.value
+    api.getUserNarratives(currentUserId),   // Pass userId.value
+    api.getUserImages(currentUserId)        // Pass userId.value
+  ]);
     stories.value = Array.isArray(storiesRes) ? storiesRes : [];
     narratives.value = Array.isArray(narrativesRes) ? narrativesRes : [];
     images.value = Array.isArray(imagesRes) ? imagesRes.map(img => ({ ...img, downloadUrl: null })) : [];
@@ -189,25 +180,21 @@ const downloadStoryPdf = async (story) => {
     if (!story?.story_id || !story?.story_content) { alert('Invalid story data.'); return; }
     console.log(`Requesting PDF for story: ${story.story_name}`);
     try {
-        // *** FIX: Use 'api' instead of 'apiService' ***
-        const blob = await api.getStoryPdf(story.story_name, story.story_content);
-        saveAs(blob, `${story.story_name.replace(/[^a-z0-9]/gi, '_') || 'story'}.pdf`);
+      if (!userId.value) {
+          alert('User session error. Please try logging in again.');
+          return;
+      }
+
+      const pdfData = {
+        story_name: story.story_name,
+        story_content: story.story_content,
+        user_id: userId.value // Pass the user_id
+      };
+      const blob = await api.generateStoryPDF(pdfData);
+
     } catch (err) {
         console.error(`Error downloading story PDF (${story.story_id}):`, err);
         alert(`Failed to download PDF for "${story.story_name}": ${err.message}`);
-    }
-};
-
-const downloadNarrativePdf = async (narrative) => {
-     if (!narrative?.narrative_id || !narrative?.narrative_content) { alert('Invalid narrative data.'); return; }
-     console.log(`Requesting PDF for narrative: ${narrative.narrative_name}`);
-     try {
-        // *** FIX: Use 'api' instead of 'apiService' ***
-        const blob = await api.getNarrativePdf(narrative.narrative_name, narrative.narrative_content, narrative.source_stories);
-        saveAs(blob, `${narrative.narrative_name.replace(/[^a-z0-9]/gi, '_') || 'narrative'}.pdf`);
-    } catch (err) {
-        console.error(`Error downloading narrative PDF (${narrative.narrative_id}):`, err);
-        alert(`Failed to download PDF for "${narrative.narrative_name}": ${err.message}`);
     }
 };
 
