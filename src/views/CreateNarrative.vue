@@ -357,16 +357,6 @@ watch(isAuthenticated, (isAuth, wasAuth) => {
 <style scoped>
 /* Using Tailwind utilities, scoped styles might not be heavily needed */
 /* But keep custom fonts or complex styles here */
-@font-face {
-    font-family: 'Didot';
-    src: url('@/assets/fonts/Didot.woff2') format('woff2'),
-        url('@/assets/fonts/Didot.woff') format('woff');
-    font-weight: normal;
-    font-style: normal;
-}
-.font-didot {
-   font-family: 'Didot', serif;
-}
 .error-message {
   color: red;
 }

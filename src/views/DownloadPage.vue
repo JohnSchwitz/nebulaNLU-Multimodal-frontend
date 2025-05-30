@@ -1,253 +1,181 @@
 <!-- DownloadPage.vue -->
 <template>
-  <div class="download-page container">
-    <h1>Download Your Content</h1>
+  <div class="download-page-container container mx-auto p-4 md:p-6"> <!-- Added mx-auto and specific container class -->
+    <h1 class="download-page-title text-center mb-6">Download Your Saved Stories</h1> <!-- Added class for title -->
 
-    <!-- Display loading/error based on auth state FIRST -->
-    <div v-if="authIsLoading" class="loading-indicator">
-      <p>Checking authentication...</p>
-    </div>
-    <div v-else-if="!isAuthenticated" class="error-message">
-      <p>Please log in via Ghost to access this page.</p>
-
-    </div>
-    <div v-else-if="authError" class="error-message">
-       <p>Authentication error: {{ authError }}</p>
-    </div>
-
-    <!-- Main content shown only when authenticated and auth check done -->
+    <!-- Auth Status (keep existing logic) -->
+    <div v-if="authIsLoading" class="loading-indicator"><p>Checking authentication...</p></div>
+    <div v-else-if="!isAuthenticated" class="error-message"><p>Please log in to access this page.</p></div>
+    <div v-else-if="authError" class="error-message"><p>Auth Error: {{ authError }}</p></div>
 
     <div v-else>
-        <div v-if="isLoading" class="loading-indicator">
-        <p>Loading your data for user ID: {{ userId }}...</p>
+        <div v-if="isLoadingStories" class="loading-indicator">
+            <p>Loading your stories for user ID: {{ userId }}...</p>
         </div>
+        <div v-if="storiesError" class="error-message"><p>Error loading stories: {{ storiesError }}</p></div>
 
-        <div v-if="error" class="error-message">
-        <p>Error loading data: {{ error }}</p>
-        </div>
-
-        <div v-if="!isLoading && !error">
-            <p>Select the items you wish to download and click the 'Download Selected' button.</p>
-            <p>Note: Currently, images need to be downloaded individually via provided links (if available) or require future backend support for bulk/direct download.</p>
-
-            <!-- Stories Section -->
-
-            <section class="download-section">
-                <h2>Stories ({{ stories.length }})</h2>
-                <ul v-if="stories.length > 0">
-                <li v-for="story in stories" :key="story.story_id">
-                    <input
-                    type="checkbox"
-                    :id="'story-' + story.story_id"
-                    :value="story.story_id"
-                    v-model="selectedStoryIds"
-                    />
-                    <label :for="'story-' + story.story_id">{{ story.story_name }}</label>
-                    <button @click="downloadStoryPdf(story)" class="btn-download-item">Download PDF</button>
-                </li>
+        <div v-if="!isLoadingStories && !storiesError">
+            <!-- This is the main box for the story list -->
+            <section class="stories-list-box download-section rounded-md shadow-md p-4 md:p-6"
+                     :style="{ backgroundColor: '#FFE086', color: 'black' }">
+                <h2 class="stories-list-title mb-4">My Stories ({{ stories.length }})</h2>
+                <ul v-if="stories.length > 0" class="list-none p-0">
+                    <li v-for="story in stories" :key="story.story_id || story.session_id"
+                        class="story-item flex justify-between items-center py-3 border-b border-gray-700 last:border-b-0">
+                        <span class="story-name">{{ story.name || `Story - ${formatDate(story.created_at)}` }}</span>
+                        <button @click="downloadStoryAsPdf(story)"
+                                class="btn-download-item bg-blue-600 hover:bg-blue-700 text-white">
+                            Download PDF
+                        </button>
+                    </li>
                 </ul>
-                <p v-else>No stories found.</p>
+                <p v-else class="story-item-text">No stories found.</p> <!-- Apply story-item-text style -->
             </section>
-
-            <!-- Images Section -->
-<!--
-            <section class="download-section">
-                <h2>Images ({{ images.length }})</h2>
-                <p class="note">Image download requires backend support for Signed URLs or direct download.</p>
-                <ul v-if="images.length > 0">
-                <li v-for="image in images" :key="image.image_id">
-                    <input
-                    type="checkbox"
-                    :id="'image-' + image.image_id"
-                    :value="image.image_id"
-                    v-model="selectedImageIds"
-                    />
-                    <label :for="'image-' + image.image_id">
-                    {{ image.image_title || 'Untitled Image' }}
-                    <em v-if="image.image_description"> - {{ image.image_description.substring(0, 50) }}...</em>
-                    <span class="gcs-path"> (Path: {{ image.image_path }})</span>
-                    </label>
-                    <button @click="downloadImage(image)" class="btn-download-item" :disabled="isFetchingSignedUrl === image.image_id">
-                    {{ isFetchingSignedUrl === image.image_id ? 'Getting Link...' : 'Get Download Link' }}
-                    </button>
-                    <a v-if="image.downloadUrl" :href="image.downloadUrl" target="_blank" rel="noopener noreferrer" class="download-link">Direct Link</a>
-                </li>
-                </ul>
-                <p v-else>No images found.</p>
-            </section>
--->
-            <!-- Download Button -->
-
-            <div class="download-actions">
-                <button
-                    @click="handleBulkDownload"
-                    :disabled="!hasSelection || isDownloading"
-                    class="btn-primary"
-                >
-                {{ isDownloading ? 'Downloading...' : 'Download Selected (Not Implemented)' }}
-                </button>
-                <p v-if="!hasSelection" class="note">Please select items to download.</p>
-                <p class="note">Bulk download currently not supported. Please use individual download buttons.</p>
-            </div>
-
         </div>
     </div>
-
   </div>
 </template>
 
-<script setup>
-import { ref, onMounted, computed, watch } from 'vue';
+<script setup lang="ts">
+import { ref, onMounted, watch } from 'vue';
 import api from '@/services/api';
-import { saveAs } from 'file-saver';
+import { saveAs } from 'file-saver'; // For PDF download
 import { useAuthStore } from '@/stores/auth';
 import { storeToRefs } from 'pinia';
 
-// --- State ---
-const stories = ref([]);
-const narratives = ref([]);
-const images = ref([]);
-const selectedStoryIds = ref([]);
-const selectedNarrativeIds = ref([]);
-const selectedImageIds = ref([]);
-const isLoading = ref(true);
-const error = ref(null);
-const isDownloading = ref(false);
-const isFetchingSignedUrl = ref(null);
+interface StoryListItem { // Type for items from /api/user/stories
+  story_id: string;
+  name: string;
+  content?: string; // Full content might not be in the list view
+  created_at: string | Date;
+  // Add other fields returned by your /api/user/stories
+}
 
-// --- Pinia Auth Store ---
+const stories = ref<StoryListItem[]>([]);
+const isLoadingStories = ref(true);
+const storiesError = ref<string | null>(null);
+
 const authStore = useAuthStore();
-const {
-    userId,
-    error: authError,
-    isLoading: authIsLoading,
-    isAuthenticated
-} = storeToRefs(authStore);
+const { userId, isAuthenticated, isLoading: authIsLoading, error: authError } = storeToRefs(authStore);
 
-// --- Computed ---
-const hasSelection = computed(() => {
-  return selectedStoryIds.value.length > 0 ||
-         selectedNarrativeIds.value.length > 0 ||
-         selectedImageIds.value.length > 0;
-});
+const formatDate = (dateInput: string | Date | undefined): string => { /* ... same as before ... */ };
 
-// --- Methods ---
-const fetchData = async () => {
-  if (!userId.value && isAuthenticated.value) { // Check if authenticated but ID is missing somehow
-      console.warn("FetchData: User authenticated but userId from store is missing.");
-      // Maybe fetch user profile first? Or rely on token alone if backend allows
+async function fetchUserStories() {
+  if (!isAuthenticated.value) {
+    storiesError.value = "Not authenticated."; isLoadingStories.value = false; return;
   }
-  if (!isAuthenticated.value) { // Don't fetch if not authenticated
-       return;
+  if (!userId.value || typeof userId.value !== 'string') {
+    storiesError.value = "User ID not available."; isLoadingStories.value = false; return;
   }
 
-  console.log(`Fetching data for user associated with current token...`);
-  isLoading.value = true;
-  error.value = null;
-
+  isLoadingStories.value = true;
+  storiesError.value = null;
+  console.log(`[DownloadPage] Fetching stories for user ID: ${userId.value}`);
   try {
-  if (!isAuthenticated.value || !userId.value) {
-      logger.warn("DownloadPage: User not authenticated or userId missing, cannot fetch data.");
-      error.value = "User not authenticated. Please log in.";
-      isLoading.value = false; // Stop loading indicator
-      return; // Exit early
-  }
-
-  // Now we know userId.value is available
-  const currentUserId = userId.value; // Use a local const for clarity in Promise.all
-
-  logger.info(`[DownloadPage] Fetching data for user ID: ${currentUserId}`);
-  const [storiesRes, narrativesRes, imagesRes] = await Promise.all([
-    api.getUserStories(currentUserId),      // Pass userId.value
-    api.getUserNarratives(currentUserId),   // Pass userId.value
-    api.getUserImages(currentUserId)        // Pass userId.value
-  ]);
-    stories.value = Array.isArray(storiesRes) ? storiesRes : [];
-    narratives.value = Array.isArray(narrativesRes) ? narrativesRes : [];
-    images.value = Array.isArray(imagesRes) ? imagesRes.map(img => ({ ...img, downloadUrl: null })) : [];
-  } catch (err) {
-    console.error("Error fetching user data:", err);
-    error.value = err.message || 'Failed to load data from the server.';
-     if (err.response?.status === 401) {
-        error.value = "Authentication failed. Please log in again via Ghost.";
-    }
+    const storiesData = await api.getUserStories(userId.value);
+    stories.value = Array.isArray(storiesData) ? storiesData : [];
+  } catch (e: any) {
+    storiesError.value = e.message || 'Failed to load stories.';
   } finally {
-    isLoading.value = false;
+    isLoadingStories.value = false;
+  }
+}
+
+const downloadStoryAsPdf = async (story: StoryListItem) => {
+
+  // Assuming for now 'story.content' IS available or you'll fetch it:
+  const storyName = story.name || 'Untitled_Story';
+  const storyContent = story.content;
+
+  if (!storyContent) {
+    alert('Full story content is not available for this item to generate PDF. This might require fetching the full story details first.');
+    storiesError.value = `Full content for "${storyName}" not loaded.`;
+    return;
+  }
+   if (!userId.value) { alert('User session error.'); return; }
+
+  console.log(`[DownloadPage] Requesting PDF for story: ${storyName}`);
+  // (Optional: set a specific PDF downloading loading state)
+  try {
+    const pdfData = {
+      story_name: storyName,
+      story_content: storyContent,
+      user_id: userId.value
+    };
+    const blob = await api.generateStoryPDF(pdfData);
+    saveAs(blob, `${storyName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+  } catch (err: any) {
+    storiesError.value = `Failed to download PDF for "${storyName}": ${err.message}`;
+  } finally {
+    // (Optional: clear specific PDF downloading loading state)
   }
 };
 
-const downloadStoryPdf = async (story) => {
-    if (!story?.story_id || !story?.story_content) { alert('Invalid story data.'); return; }
-    console.log(`Requesting PDF for story: ${story.story_name}`);
-    try {
-      if (!userId.value) {
-          alert('User session error. Please try logging in again.');
-          return;
-      }
-
-      const pdfData = {
-        story_name: story.story_name,
-        story_content: story.story_content,
-        user_id: userId.value // Pass the user_id
-      };
-      const blob = await api.generateStoryPDF(pdfData);
-
-    } catch (err) {
-        console.error(`Error downloading story PDF (${story.story_id}):`, err);
-        alert(`Failed to download PDF for "${story.story_name}": ${err.message}`);
-    }
-};
-
-const downloadImage = async (image) => {
-    if (!image?.image_id || !image?.image_path) { alert('Invalid image data.'); return; }
-    console.log(`Requesting download URL for image: ${image.image_title} (ID: ${image.image_id})`);
-    isFetchingSignedUrl.value = image.image_id;
-    try {
-        // *** FIX: Use 'api' instead of 'apiService' ***
-        const signedUrl = await api.getImageDownloadUrl(image.image_id);
-        if (signedUrl) {
-            const imgIndex = images.value.findIndex(img => img.image_id === image.image_id);
-            if (imgIndex > -1) images.value[imgIndex].downloadUrl = signedUrl;
-            console.log(`Obtained Signed URL for ${image.image_id}`);
-        } else { throw new Error("Backend did not return a valid download URL."); }
-    } catch (err) {
-        console.error(`Error getting download URL for image ${image.image_id}:`, err);
-        alert(`Failed to get download link for "${image.image_title}": ${err.message}.`);
-         const imgIndex = images.value.findIndex(img => img.image_id === image.image_id);
-         if (imgIndex > -1) images.value[imgIndex].downloadUrl = null;
-    } finally {
-        isFetchingSignedUrl.value = null;
-    }
-};
-
-const handleBulkDownload = () => {
-   alert("Bulk download is not yet implemented.");
-};
-
-// --- Lifecycle Hooks ---
 onMounted(() => {
-  if (isAuthenticated.value) {
-      fetchData();
-  } else {
-      isLoading.value = false;
+  if (isAuthenticated.value && userId.value) {
+    fetchUserStories();
   }
 });
 
-watch(isAuthenticated, (newValue, oldValue) => {
-  if (newValue === true && oldValue === false) {
-    fetchData();
+watch([isAuthenticated, userId], ([newIsAuth, newUserId]) => {
+  if (newIsAuth && newUserId) {
+    if (stories.value.length === 0 && !isLoadingStories.value) {
+      fetchUserStories();
+    }
+  } else if (!newIsAuth) {
+    stories.value = [];
+    storiesError.value = null;
   }
-  if(newValue === false && oldValue === true) {
-      stories.value = []; narratives.value = []; images.value = [];
-      selectedStoryIds.value = []; selectedNarrativeIds.value = []; selectedImageIds.value = [];
-      error.value = null;
-  }
-});
-
+}, { immediate: false });
 </script>
 
 <style scoped>
-/* ... (styles remain the same) ... */
+/* General page container styling if needed */
+.download-page-container {
+  font-family: 'Georgia', serif; /* Or your preferred page font */
+}
+
+.download-page-title {
+  font-size: 2rem;    /* Example: Larger size for the main page title */
+  font-weight: bold;  /* Bold the title */
+  color: #1f2937;   /* Dark gray, Tailwind text-gray-800 */
+}
+
+.stories-list-box {
+  /* Background color is set by inline style :style="{ backgroundColor: '#FFE086' }" */
+  /* color: black; /* Also set by inline style */
+  /* Add any other box-specific styles like padding if not handled by Tailwind */
+}
+
+.stories-list-title {
+  font-size: 1.5rem;  /* Example: Size for "My Stories (X)" */
+  font-weight: 600; /* semibold */
+  color: inherit; /* Inherits black from parent */
+}
+
+.story-item {
+  /* Styles for each <li> item in the list */
+}
+
+.story-item-text, /* For "No stories found" and list item text */
+.story-item .story-name { /* Target the span holding the story name */
+  font-size: 1.3rem;  /* INCREASED FONT SIZE for story names/text */
+  line-height: 1.6;
+  color: inherit; /* Inherits black from parent */
+}
+
+.btn-download-item {
+  /* Tailwind: bg-blue-600 hover:bg-blue-700 text-white */
+  /* You can add more specific styles here if Tailwind isn't enough */
+  padding: 0.5rem 1rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+
+.error-message { color: red; margin-top: 1rem; /* Basic error styling */ }
+.loading-indicator { margin-top: 1rem; color: #555; }
+
+
 .container {
   max-width: 900px;
   margin: 2rem auto;

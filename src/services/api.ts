@@ -69,6 +69,11 @@ apiClient.interceptors.response.use(
 );
 
 // --- TypeScript Interfaces for Payloads and Responses ---
+interface UiTextsResponse {
+    placeholderPrompts: string[];
+    initialStoryGuidance: string;
+}
+
 interface StorySegmentResponse {
   session_id: string;
   story: string;
@@ -90,12 +95,6 @@ interface SaveResponse {
   message: string;
 }
 
-interface NarrativeResponse {
-  narrative: string;
-  source_stories?: string[]; // Assuming these are story IDs or names
-}
-
-// Updated interfaces with user_id
 interface StartStoryPayload {
   initial_prompt: string;
   user_id: string;
@@ -119,29 +118,9 @@ interface SaveStoryPayload {
   user_id: string;
 }
 
-interface GenerateNarrativePayload {
-  selected_stories: { story_id: string; content: string }[];
-  narrative_theme?: string;
-  user_id: string;
-}
-
-interface SaveNarrativePayload {
-  narrative_name: string;
-  narrative_content: string;
-  source_stories: string[]; // Story IDs
-  user_id: string;
-}
-
 interface PdfStoryPayload {
   story_name: string;
   story_content: string;
-  user_id: string;
-}
-
-interface PdfNarrativePayload {
-  narrative_name: string;
-  narrative_content: string;
-  source_stories: string[];
   user_id: string;
 }
 
@@ -168,6 +147,35 @@ const api = {
   },
 
   // == Story Methods (Session-Based) ==
+  async getUiTexts(): Promise<UiTextsResponse> {
+    try {
+        // Ensure the backend route is '/api/ui/texts' as defined in main.py
+        const response: AxiosResponse<UiTextsResponse> = await apiClient.get('/api/ui/texts');
+        // Provide a more robust default if response.data is unexpectedly shaped
+        return response.data || {
+            placeholderPrompts: ["What happens next in your amazing story?"],
+            initialStoryGuidance: "Let's begin our adventure! What's your first idea?"
+        };
+    } catch (error: any) {
+        console.error('Error fetching UI texts from backend:', error);
+        // Return a fallback object that matches the UiTextsResponse structure
+        return {
+            placeholderPrompts: ["Tell me what happens next...", "What if...?"],
+            initialStoryGuidance: "Welcome! Please enter your story idea below to begin this epic journey."
+        };
+    }
+  },
+
+  async getPlaceholderPrompts(): Promise<string[]> {
+    try {
+        const response: AxiosResponse<string[]> = await apiClient.get('/api/ui/placeholders');
+        return Array.isArray(response.data) ? response.data : [];
+    } catch (error: any) {
+        console.error('Error fetching placeholder prompts:', error);
+        return ["What amazing adventure awaits?", "Tell me more..."]; // Fallback
+    }
+  },
+
   async startStory(data: StartStoryPayload): Promise<StorySegmentResponse> {
     try {
       const response: AxiosResponse<StorySegmentResponse> = await apiClient.post('/api/story/start', data);
@@ -225,35 +233,6 @@ const api = {
     }
   },
 
-  // == Narrative Methods ==
-  async generateNarrative(data: GenerateNarrativePayload): Promise<NarrativeResponse> {
-    try {
-      const response: AxiosResponse<NarrativeResponse> = await apiClient.post(`/api/narrative/generate`, data);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.error || 'Failed to generate narrative');
-    }
-  },
-
-  async saveNarrative(data: SaveNarrativePayload): Promise<SaveResponse> {
-    try {
-      const response: AxiosResponse<SaveResponse> = await apiClient.post(`/api/narrative/save`, data);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.error || 'Failed to save narrative');
-    }
-  },
-
-  async getUserNarratives(userId: string): Promise<any[]> {
-    try {
-      const response = await apiClient.get(`/api/narrative/user?user_id=${encodeURIComponent(userId)}`);
-      return Array.isArray(response.data) ? response.data : [];
-    } catch (error: any) {
-      console.error('Error fetching user narratives:', error);
-      return [];
-    }
-  },
-
   // == PDF Methods ==
   async generateStoryPDF(data: PdfStoryPayload): Promise<Blob> {
     try {
@@ -264,25 +243,6 @@ const api = {
       return response.data;
     } catch (error: any) {
       const errMessage = "Failed to download story PDF.";
-      if (error.response && error.response.data instanceof Blob) {
-        try {
-          const errJson = JSON.parse(await error.response.data.text());
-          throw new Error(errJson.error || errMessage);
-        } catch (_) { /* ignore parsing error of blob */ }
-      }
-      throw new Error(error.response?.data?.error || error.message || errMessage);
-    }
-  },
-
-  async generateNarrativePDF(data: PdfNarrativePayload): Promise<Blob> {
-    try {
-      const response = await apiClient.post('/api/pdf/narrative', data, { responseType: 'blob' });
-      if (!(response.data instanceof Blob)) {
-        throw new Error("Invalid PDF response data from server.");
-      }
-      return response.data;
-    } catch (error: any) {
-      const errMessage = "Failed to download narrative PDF.";
       if (error.response && error.response.data instanceof Blob) {
         try {
           const errJson = JSON.parse(await error.response.data.text());
@@ -321,25 +281,6 @@ const api = {
       throw new Error(error.response?.data?.error || 'Failed to generate image');
     }
   },
-
-  async saveImage(data: { image_url: string; metadata: any; user_id: string }): Promise<any> {
-    try {
-      const response = await apiClient.post('/api/image/save', data);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.error || 'Failed to save image');
-    }
-  },
-
-  async getUserImages(userId: string): Promise<any[]> {
-    try {
-      const response = await apiClient.get(`/api/image/user?user_id=${encodeURIComponent(userId)}`);
-      return Array.isArray(response.data) ? response.data : [];
-    } catch (error: any) {
-      console.error('Error fetching user images:', error);
-      return [];
-    }
-  }
 };
 
 export default api;
