@@ -198,6 +198,8 @@ const generateImageWithDalle = async () => {
 };
 
 // --- Image Download Method ---
+// CreatePicture.vue - <script setup lang="ts">
+
 const downloadGeneratedImage = () => {
   console.log("[CreatePicture.vue] downloadGeneratedImage function CALLED.");
   if (!generatedImageUrl.value) {
@@ -206,19 +208,33 @@ const downloadGeneratedImage = () => {
     return;
   }
   try {
+    const imageUrl = generatedImageUrl.value; // The URL from DALL-E
+    const title = imageTitle.value.trim() || 'ai-generated-dalle-image';
+    const filename = `${title.replace(/\s+/g, '_')}.png`; // Assume png, DALL-E usually provides png
+
+    console.log(`[CreatePicture.vue] Attempting to download: ${imageUrl} as ${filename}`);
+
     const link = document.createElement('a');
-    link.href = generatedImageUrl.value; // This is the URL from DALL-E
-    link.download = `${(imageTitle.value.trim() || 'ai-generated-image').replace(/\s+/g, '_')}.png`;
+    link.href = imageUrl;
+    link.setAttribute('download', filename); // Suggests a filename to the browser
+
+    // For cross-origin downloads where the server doesn't send Content-Disposition,
+    // and to bypass some CORS issues with programmatic fetches, this approach is common.
+    // However, its success can depend on browser security policies and server headers.
+    // It does NOT fetch the image via JS; it tells the browser to navigate/download.
 
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    document.body.removeChild(link); // Clean up the link
 
-    successMessage.value = "Download initiated! Check your browser's downloads.";
-    console.log("[CreatePicture.vue] Image download initiated for:", generatedImageUrl.value);
-  } catch (e: any) {
-    console.error("Error triggering image download:", e);
-    error.value = "Could not trigger image download. Try right-clicking the image to save, or check browser console for errors related to the image URL itself.";
+    // We can't be 100% sure the download started successfully with this method,
+    // as it relies on browser behavior for cross-origin 'download' attribute.
+    successMessage.value = "Download initiated. Please check your browser's downloads.";
+    console.log("[CreatePicture.vue] Download link clicked for:", imageUrl);
+
+  } catch (e: any) { // This catch is unlikely to be hit for the anchor trick unless createElement fails
+    console.error("Error setting up DALL-E image download link:", e);
+    error.value = "Could not initiate image download. Try right-clicking the image to save.";
   }
 };
 
