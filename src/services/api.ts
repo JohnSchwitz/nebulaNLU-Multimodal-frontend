@@ -3,14 +3,13 @@ import axios from 'axios';
 import type { AxiosResponse, AxiosRequestConfig } from 'axios'; // Correct way to import types
 
 // --- Configuration ---
-// For deployment, VITE_API_URL should be set in your build environment (e.g., Netlify, Vercel, Docker env)
 // It should point to your *deployed* backend API URL.
 // For local development, it falls back to http://127.0.0.1:5000.
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 const AUTH_TOKEN_STORAGE_KEY = 'app_auth_token'; // Consistent key for storing the backend token
 
 console.log(`API Service configured for URL: ${API_URL}`);
-if (import.meta.env.PROD && API_URL === 'http://127.0.0.1:5000') {
+if (import.meta.env.PROD && API_URL === 'http://localhost:5000') {
     console.warn(
         'WARNING: Application is in PRODUCTION mode but API_URL is set to localhost. ' +
         'Ensure VITE_API_URL is correctly set in your deployment environment.'
@@ -20,6 +19,7 @@ if (import.meta.env.PROD && API_URL === 'http://127.0.0.1:5000') {
 // --- Axios Client Setup ---
 const apiClient = axios.create({
   baseURL: API_URL,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
