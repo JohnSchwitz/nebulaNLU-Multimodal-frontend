@@ -1,22 +1,17 @@
-import { config } from '@vue/test-utils'
-import { vi } from 'vitest'
+import { afterEach, vi } from 'vitest';
 
-// Mock vue-router
-config.global.mocks = {
-  $router: {
-    push: vi.fn()
-  }
-}
+// This automatically mocks the entire api service for every test file.
+vi.mock('@/services/api');
 
-// Mock axios
-vi.mock('axios', () => ({
-  default: {
-    post: vi.fn(),
-    get: vi.fn()
-  }
-}))
+// Mock the vue-router to prevent errors in components that use it.
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn(() => ({ query: {} })),
+  useRouter: vi.fn(() => ({
+    push: vi.fn(),
+  })),
+}));
 
-// Clean up mocks after each test
+// This ensures that our mocks are reset between each test.
 afterEach(() => {
-  vi.clearAllMocks()
-})
+  vi.clearAllMocks();
+});

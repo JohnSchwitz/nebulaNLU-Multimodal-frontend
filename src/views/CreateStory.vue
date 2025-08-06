@@ -423,11 +423,17 @@ onMounted(async () => {
 
       <!-- Action Buttons: Start/Continue/Complete -->
       <div v-if="!isCompleted" class="flex flex-wrap justify-center items-center gap-4 mb-6">
+
+        <!-- This button serves two purposes: Start and Continue -->
         <button
           @click="generateStory"
           :disabled="!storyTellerInput.trim() || loading || !isAuthenticated"
           class="action-button primary-button"
           :title="!isAuthenticated ? 'Please log in first' : (!storyTellerInput.trim() ? 'Enter some text first' : (sessionId ? 'Continue with your input' : 'Start a new story with your idea'))"
+
+          <!-- ADD THIS IDENTIFIER -->
+          <!-- The ID changes based on the button's current function -->
+          :data-testid="sessionId ? 'continue-story-button' : 'start-story-button'"
         >
           <svg v-if="loading && !isCompletingStory" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -442,6 +448,9 @@ onMounted(async () => {
             :disabled="loading || !isAuthenticated"
             class="action-button secondary-button"
             title="Ask the AI to write a final conclusion for the story"
+
+            <!-- ADD THIS IDENTIFIER -->
+            data-testid="complete-story-button"
         >
             <svg v-if="loading && isCompletingStory" class="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
