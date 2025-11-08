@@ -1,307 +1,161 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useAuthStore } from '@/stores/auth';
-import { storeToRefs } from 'pinia';
 import api from '@/services/api';
+import { storeToRefs } from 'pinia'; // <-- THE CRITICAL MISSING IMPORT
 
+// --- Pinia Store Setup ---
 const authStore = useAuthStore();
-const { userId, authUserName, authError, authIsLoading, isAuthenticated } = storeToRefs(authStore);
+// Use storeToRefs to create reactive references to the store's state and getters.
+// This makes them usable in the template and keeps them reactive.
+const {
+  userId,
+  isAuthenticated,
+  userDisplayName: authUserName,
+  isLoading: authIsLoading,
+  error: authError
+} = storeToRefs(authStore);
 
+// --- Component State ---
 const storyTellerInput = ref('');
 const storyContent = ref('');
-const loading = ref(false);
-const sessionId = ref<string | null>(null);
-const isCompleted = ref(false);
 const storyName = ref('');
-const uploadLoading = ref(false);
-const uploadError = ref(null);
-const uploadSuccessMessage = ref(null);
-const storyNameTouched = ref(false);
-const isCompletingStory = ref(false);
+const sessionId = ref<string | null>(null);
 const currentIteration = ref(0);
-const aiSuggestionForNextTurn = ref<string | null>(null);
-const placeholderPrompts = ref<string[]>([]);
-const currentPlaceholder = ref('');
-const generationError = ref<string | null>(null);
-const initialGuidanceFromAPI = ref<string>('');
+const isCompleted = ref(false);
+const currentPlaceholder = ref('Type your story idea or continuation here...');
+const aiSuggestionForNextTurn = ref('');
+const initialGuidanceFromAPI = ref('');
 
-const isStoryNameValid = computed(() => storyName.value.trim().length > 0);
+// --- UI & Loading State ---
+const loading = ref(false); // For AI generation
+const isCompletingStory = ref(false);
+const uploadLoading = ref(false); // For saving/PDF
+const generationError = ref<string | null>(null);
+const uploadError = ref<string | null>(null);
+const uploadSuccessMessage = ref<string | null>(null);
+const storyNameTouched = ref(false);
+
+// --- Computed Properties for UI Logic ---
+const isStoryNameValid = computed(() => storyName.value.trim() !== '');
 const showNameError = computed(() => storyNameTouched.value && !isStoryNameValid.value);
 
-// This function manually checks token if refreshTokenIfNeeded doesn't exist
-async function ensureAuthenticated() {
-  if (!isAuthenticated.value) {
-    throw new Error("Not authenticated. Please log in again.");
-  }
-
-  // If the auth store has a refreshTokenIfNeeded function, use it
-  if (typeof authStore.refreshTokenIfNeeded === 'function') {
-    await authStore.refreshTokenIfNeeded();
-  } else {
-    // Otherwise, we'll just verify the token is present
-    const token = localStorage.getItem('app_auth_token');
-    if (!token) {
-      throw new Error("Authentication token is missing. Please log in again.");
-    }
-    // Log that we're proceeding with the existing token
-    console.log("Using existing authentication token");
-  }
-
-  return true;
-}
-
-async function fetchUiTexts() { // Renamed from fetchAndSetPlaceholders
-    try {
-        const uiTexts = await api.getUiTexts(); // Call new method
-        if (uiTexts.placeholderPrompts && uiTexts.placeholderPrompts.length > 0) {
-            placeholderPrompts.value = uiTexts.placeholderPrompts;
-        } else {
-            placeholderPrompts.value = ["What happens next in the story?"]; // Default
-        }
-        initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance || "Let's write a story!"; // Default
-        getRandomPlaceholder();
-    } catch (e) {
-        console.error("Failed to fetch placeholder prompts, using defaults:", e);
-        placeholderPrompts.value = ["What creative idea will you add?"];
-    }
-}
-
-function getRandomPlaceholder() {
-  if (placeholderPrompts.value.length === 0) {
-    currentPlaceholder.value = "What happens next?"; // Absolute fallback
-    return;
-  }
-  const randomIndex = Math.floor(Math.random() * placeholderPrompts.value.length);
-  currentPlaceholder.value = placeholderPrompts.value[randomIndex];
-}
-
-async function generateStory() {
-  try {
-    await ensureAuthenticated();
-    if (!storyTellerInput.value.trim() || !isAuthenticated.value) return;
-    if (!userId.value) { throw new Error("User ID is missing."); }
-
-    loading.value = true;
-    generationError.value = null;
-    // isCompletingStory.value = false; // This ref seems specific to completeStory button state
-
-    let responseData;
-    const userProvidedInput = storyTellerInput.value.trim(); // The actual text from the user
-
-    if (!sessionId.value) { // START NEW STORY
-      isCompleted.value = false;
-      aiSuggestionForNextTurn.value = null;
-
-      const payload = {
-        initial_prompt: userProvidedInput, // Send only the user's idea
-        user_id: userId.value
-      };
-      console.log("[CreateStory.vue] Calling api.startStory with payload:", payload);
-      responseData = await api.startStory(payload);
-
-      if (responseData && responseData.story && responseData.session_id) {
-        storyContent.value = responseData.story;
-        sessionId.value = responseData.session_id;
-        currentIteration.value = responseData.iteration || 1;
-        aiSuggestionForNextTurn.value = responseData.next_prompt_for_user || null;
-        isCompleted.value = responseData.complete || false;
-      } else {
-        throw new Error("Failed to start story. Invalid response from server.");
-      }
-    } else { // CONTINUE EXISTING STORY
-      isCompleted.value = false;
-
-      const payload = { session_id: sessionId.value, feedback: userProvidedInput, user_id: userId.value };
-      responseData = await api.continueStory(payload);
-
-      if (responseData && responseData.story) {
-        storyContent.value = responseData.full_story;
-        currentIteration.value = responseData.iteration || (currentIteration.value + 1); // Backend sends incremented
-        aiSuggestionForNextTurn.value = responseData.next_prompt_for_user || null;
-        isCompleted.value = responseData.complete || false;
-      } else { /* ... error handling ... */ }
-    }
-    storyTellerInput.value = '';
-  } catch(e) { /* ... */ }
-  finally { loading.value = false; }
-}
-
-async function completeStory() {
-  if (!sessionId.value || !isAuthenticated.value || loading.value) return;
-  if (!userId.value) { generationError.value = "User ID missing."; return; }
-
+// --- API Calls ---
+const generateStory = async () => {
+  if (!storyTellerInput.value.trim() || !isAuthenticated.value) return;
   loading.value = true;
   generationError.value = null;
 
   try {
-    const payload = { session_id: sessionId.value, user_id: userId.value };
-    console.log("[CreateStory.vue] Calling api.completeStory with payload:", payload);
-    const responseData = await api.completeStory(payload);
-
-    if (responseData && responseData.story) {
-      storyContent.value = responseData.story; // This is the full, finalized story
-      currentIteration.value = responseData.iteration || currentIteration.value; // Keep last iteration
-      aiSuggestionForNextTurn.value = null; // No more suggestions after completion
-      isCompleted.value = responseData.complete !== undefined ? responseData.complete : true;
+    let response;
+    if (sessionId.value) {
+      response = await api.continueStory({
+        session_id: sessionId.value,
+        feedback: storyTellerInput.value,
+      });
+      storyContent.value += `\n\n${response.story}`;
     } else {
-      throw new Error("Failed to finalize story. Invalid response from server.");
+      response = await api.startStory({
+        initial_prompt: storyTellerInput.value,
+      });
+      sessionId.value = response.session_id;
+      storyContent.value = response.story;
     }
-  } catch(e) {
-    console.error("Error in completeStory:", e);
-    generationError.value = e.message || "Failed to finalize story.";
-    isCompleted.value = false; // Revert on error
+    currentIteration.value = response.iteration || currentIteration.value + 1;
+    aiSuggestionForNextTurn.value = response.next_prompt_for_user || '';
+    storyTellerInput.value = '';
+  } catch (error: any) {
+    generationError.value = error.message || 'An unknown error occurred during story generation.';
   } finally {
     loading.value = false;
-    // isCompletingStory.value = false;
   }
-}
+};
 
-async function uploadToDatabase() {
-  storyNameTouched.value = true;
-  if (!isStoryNameValid.value || !isAuthenticated.value || !storyContent.value) {
-    if (!storyContent.value) uploadError.value = "There is no story content to save.";
-    return;
-  }
-  if (!userId.value) {
-    uploadError.value = "User ID is missing. Please log in again.";
-    return;
-  }
+const completeStory = async () => {
+  if (!sessionId.value || !isAuthenticated.value) return;
+  loading.value = true;
+  isCompletingStory.value = true;
+  generationError.value = null;
 
+  try {
+    const response = await api.completeStory({ session_id: sessionId.value });
+    storyContent.value = response.full_story;
+    isCompleted.value = true;
+    currentIteration.value = response.iteration;
+  } catch (error: any) {
+    generationError.value = error.message || 'Failed to finalize the story.';
+  } finally {
+    loading.value = false;
+    isCompletingStory.value = false;
+  }
+};
+
+const uploadToDatabase = async () => {
+  if (!isStoryNameValid.value || !storyContent.value || !isAuthenticated.value) return;
   uploadLoading.value = true;
   uploadError.value = null;
   uploadSuccessMessage.value = null;
 
-  // ADD USER ID TO PAYLOAD
-  const storyData = {
-    story_name: storyName.value.trim(),
-    story_content: storyContent.value, // Save the final, potentially completed story
-    sessionId: sessionId.value, // Optional: link to original session
-    user_id: userId.value // Add user ID directly to request payload
-  };
-
-  console.log("Calling api.saveStory with data:", storyData);
   try {
-    const response = await api.saveStory(storyData);
-    console.log("Upload response:", response);
-    uploadSuccessMessage.value = response.message || `Story "${storyData.story_name}" saved successfully!`;
-  } catch (error) {
-    console.error("Error uploading story:", error);
-    uploadError.value = error.message || 'An unknown error occurred during upload.';
+    const response = await api.saveStory({
+      story_name: storyName.value,
+      story_content: storyContent.value,
+      session_id: sessionId.value,
+    });
+    uploadSuccessMessage.value = response.message;
+  } catch (error: any) {
+    uploadError.value = error.message || 'An unknown error occurred while saving.';
   } finally {
     uploadLoading.value = false;
   }
-}
+};
 
-// Added function to download story as PDF
-async function downloadAsPDF() {
-  if (!storyContent.value || !storyName.value.trim()) {
-    uploadError.value = "Please provide both story content and a title to download PDF";
-    return;
-  }
-  if (!userId.value) {
-    uploadError.value = "User ID is missing. Please log in again.";
-    return;
-  }
-
+const downloadAsPDF = async () => {
+  if (!isStoryNameValid.value || !storyContent.value) return;
   try {
-    uploadLoading.value = true;
-
-    // ADD USER ID TO PAYLOAD
-    const pdfData = {
-      story_name: storyName.value.trim(),
+    const blob = await api.generateStoryPDF({
+      story_name: storyName.value,
       story_content: storyContent.value,
-      user_id: userId.value // Add user ID directly to request payload
-    };
-
-    const pdfBlob = await api.generateStoryPDF(pdfData);
-
-    // Create a download link
-    const url = window.URL.createObjectURL(pdfBlob);
+    });
+    const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.style.display = 'none';
     a.href = url;
-    a.download = `${storyName.value.trim().replace(/\s+/g, '_')}.pdf`;
+    a.download = `${storyName.value.replace(/ /g, '_')}.pdf`;
     document.body.appendChild(a);
     a.click();
-
-    // Clean up
     window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-    uploadSuccessMessage.value = "PDF downloaded successfully!";
-  } catch (error) {
-    console.error("Error downloading PDF:", error);
-    uploadError.value = error.message || 'Failed to download PDF';
-  } finally {
-    uploadLoading.value = false;
+    a.remove();
+  } catch (error: any) {
+    uploadError.value = `PDF Download Failed: ${error.message}`;
   }
-}
+};
 
-watch(isAuthenticated, (isAuth, wasAuth) => {
-  if (!isAuth && wasAuth) {
-    storyTellerInput.value = '';
-    storyContent.value = '';
-    loading.value = false;
-    isCompletingStory.value = false;
-    generationError.value = null;
-    sessionId.value = null;
-    isCompleted.value = false;
-    storyName.value = '';
-    uploadLoading.value = false;
-    uploadError.value = null;
-    uploadSuccessMessage.value = null;
-    storyNameTouched.value = false;
-    console.log("User logged out, CreateStory state reset.");
+// --- Lifecycle Hook ---
+onMounted(async () => {
+  console.log('[CreateStory.vue] Component mounted.');
+  if (isAuthenticated.value) {
+    console.log('[CreateStory.vue] User is already authenticated. Fetching UI texts.');
+    try {
+      const uiTexts = await api.getUiTexts();
+      initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
+    } catch (error) {
+      console.error("Failed to fetch UI texts, will use default guidance.", error);
+      // If the API fails, we can set a default message so the app doesn't break.
+      initialGuidanceFromAPI.value = "Welcome! Please enter your story idea below to begin.";
+    }
   }
 });
 
-onMounted(async () => {
-  await fetchUiTexts();
-  getRandomPlaceholder();
-  // Check if we're authenticated and verify token without using refreshTokenIfNeeded
-  if (isAuthenticated.value) {
+watch(isAuthenticated, async (newAuthStatus, oldAuthStatus) => {
+  if (newAuthStatus === true && oldAuthStatus === false) {
+    console.log('[CreateStory.vue] Auth status changed to TRUE. Fetching UI texts...');
     try {
-      // Try to use ensureAuthenticated instead of directly calling refreshTokenIfNeeded
-      await ensureAuthenticated();
-
-      // Add debug info about our user ID
-      console.log(`Authenticated as user with ID: ${userId.value}`);
+      const uiTexts = await api.getUiTexts();
+      initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
     } catch (error) {
-      console.error("Error refreshing token:", error);
+      console.error("Failed to fetch UI texts on auth change.", error);
+      initialGuidanceFromAPI.value = "Welcome! Please enter your story idea below to begin.";
     }
-  }
-  getRandomPlaceholder();
-  watch(storyContent, () => { // Example: change placeholder when storyContent updates
-    if (!storyTellerInput.value) { // Only if user hasn't typed something
-        getRandomPlaceholder();
-    }
-  })
-
-  console.log('CreateStory - onMounted: Checking for Ghost redirect query parameters...');
-  const urlParams = new URLSearchParams(window.location.search);
-  const ghostMemberUUID = urlParams.get('ghost_member_uuid');
-  if (ghostMemberUUID) {
-    console.log('CreateStory - onMounted: Ghost member UUID found. Attempting to process login.');
-    const ghostMemberEmail = urlParams.get('ghost_member_email');
-    const ghostMemberName = urlParams.get('ghost_member_name');
-    const ghostMemberStatus = urlParams.get('ghost_member_status');
-    const ghostMemberTier = urlParams.get('ghost_member_tier');
-    try {
-      authStore.processGhostLogin({
-        userId: ghostMemberUUID,
-        userName: ghostMemberName,
-        userEmail: ghostMemberEmail,
-        userStatus: ghostMemberStatus,
-        userTier: ghostMemberTier
-      });
-      console.log('CreateStory - onMounted: Auth store update dispatched for Ghost login.');
-      window.history.replaceState({}, document.title, window.location.pathname);
-      console.log('CreateStory - onMounted: Cleared query parameters from URL.');
-    } catch (error) {
-      console.error("CreateStory - onMounted: Error calling authStore.processGhostLogin:", error);
-      authStore.setError('Failed to process login information from redirect.');
-    }
-  } else {
-    console.log('CreateStory - onMounted: No Ghost member UUID in query params.');
   }
 });
 </script>
@@ -312,214 +166,187 @@ onMounted(async () => {
     <!-- =================================================== -->
     <!-- 1. Authentication Status Display                  -->
     <!-- =================================================== -->
+
+    <!-- Show a loading message while the auth process is running -->
     <div v-if="authIsLoading" class="text-center py-4 text-gray-600">
-      Loading user information...
-    </div>
-    <div v-else-if="authError" class="my-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-      <span class="block sm:inline">
-        <strong class="font-bold">Authentication Error:</strong> {{ authError }}. Please try logging in again.
-      </span>
-    </div>
-    <div v-else-if="!isAuthenticated" class="my-4 bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative" role="alert">
-       <span class="block sm:inline">
-         Please log in via Ghost to create and save stories.
-       </span>
+      Authenticating user, please wait...
     </div>
 
-    <!-- INSTRUCTION BOX / STATUS BOX (Orange Box) -->
-    <div v-if="isAuthenticated && userId"
-        class="instruction-box my-4 p-4 rounded-md shadow-md"
-        :style="{ backgroundColor: '#FFE086', color: 'black' }"
-        role="status">
+    <!-- Only render the rest of the page when auth is NOT loading -->
+    <div v-else>
+      <!-- Show an error if authentication failed -->
+      <div v-if="authError" class="my-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+        <span class="block sm:inline">
+          <strong class="font-bold">Authentication Error:</strong> {{ authError }}. Please try logging in again.
+        </span>
+      </div>
 
-        <p class="instruction-box-greeting mb-2">
-            Hello {{ authUserName || 'Storyteller' }}!
-            <!-- Display logic for turn information -->
-            <span v-if="!sessionId && currentIteration === 0">
-                Let's Begin! (Ready for Turn 1)
-            </span>
-            <span v-else-if="sessionId && !isCompleted && currentIteration > 0">
-                Your turn to provide input for Story Turn {{ currentIteration + 1 }}. (AI completed Turn {{ currentIteration }})
-            </span>
-            <span v-else-if="isCompleted && currentIteration > 0">
-                Story Complete ({{ currentIteration }} turns total).
-            </span>
-        </p>
+      <!-- Show a login prompt if the user is not authenticated -->
+      <div v-else-if="!isAuthenticated" class="my-4 bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative" role="alert">
+         <span class="block sm:inline">
+           Please log in via Ghost to create and save stories.
+         </span>
+      </div>
 
-        <div v-if="!sessionId && currentIteration === 0" class="instruction-box-text"> <!-- Initial state -->
-            <p v-if="initialGuidanceFromAPI" v-html="initialGuidanceFromAPI.replace(/\n/g, '<br>')"></p>
-            <p v-else>Enter your initial story idea to start our adventure!</p>
-        </div>
-        <div v-else-if="!isCompleted" class="instruction-box-text"> <!-- Story in progress -->
-            <p v-if="aiSuggestionForNextTurn" class="italic">
-                <strong>Suggestion for your next contribution:</strong> "{{ aiSuggestionForNextTurn }}"
+      <!-- =================================================== -->
+      <!-- Main Story Creation Area (only if authenticated)  -->
+      <!-- =================================================== -->
+      <div v-if="isAuthenticated" class="story-creation-area mt-6">
+
+        <!-- INSTRUCTION BOX / STATUS BOX (Orange Box) -->
+        <div class="instruction-box my-4 p-4 rounded-md shadow-md" :style="{ backgroundColor: '#FFE086', color: 'black' }" role="status">
+            <p class="instruction-box-greeting mb-2">
+                Hello {{ authUserName || 'Storyteller' }}!
+                <span v-if="!sessionId && currentIteration === 0">
+                    Let's Begin! (Ready for Turn 1)
+                </span>
+                <span v-else-if="sessionId && !isCompleted && currentIteration > 0">
+                    Your turn to provide input for Story Turn {{ currentIteration + 1 }}. (AI completed Turn {{ currentIteration }})
+                </span>
+                <span v-else-if="isCompleted && currentIteration > 0">
+                    Story Complete ({{ currentIteration }} turns total).
+                </span>
             </p>
-            <p v-else>
-                What happens next? Add to the story or suggest a new direction!
-            </p>
-            <p class="instruction-box-note mt-1">Remember, you can always ask for changes or guide the story differently.</p>
+
+            <div v-if="!sessionId && currentIteration === 0" class="instruction-box-text">
+                <p v-if="initialGuidanceFromAPI" v-html="initialGuidanceFromAPI.replace(/\n/g, '<br>')"></p>
+                <p v-else>Enter your initial story idea to start our adventure!</p>
+            </div>
+            <div v-else-if="!isCompleted" class="instruction-box-text">
+                <p v-if="aiSuggestionForNextTurn" class="italic">
+                    <strong>Suggestion for your next contribution:</strong> "{{ aiSuggestionForNextTurn }}"
+                </p>
+                <p v-else>
+                    What happens next? Add to the story or suggest a new direction!
+                </p>
+            </div>
+            <div v-else class="instruction-box-text">
+                <p class="font-semibold">Your story, "{{ storyName || 'Untitled Story' }}", is complete!</p>
+                <p>You can now save it to your collection or download it as a PDF.</p>
+            </div>
         </div>
-        <div v-else class="instruction-box-text"> <!-- Story is completed -->
-            <p class="font-semibold">Your story, "{{ storyName || 'Untitled Story' }}", is complete!</p>
-            <p>You can now save it to your collection or download it as a PDF.</p>
-        </div>
-    </div>
-    <!-- End Instruction Box -->
+        <!-- End Instruction Box -->
 
-    <!-- Loading spinner for AI actions -->
-     <div v-if="loading || uploadLoading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-       <div class="spinner"></div>
-       <p class="text-white ml-3 text-lg">
-         {{ loading && !isCompletingStory ? 'Generating Story...' : (loading && isCompletingStory ? 'Finalizing Story...' : (uploadLoading ? 'Saving...' : 'Processing...')) }}
-       </p>
-     </div>
-
-     <!-- Error/Success Messages for story generation/saving -->
-     <div v-if="generationError" class="my-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
-       <p class="font-bold">Story Generation Error</p>
-       <p>{{ generationError }}</p>
-     </div>
-     <div v-if="uploadError" class="my-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
-       <p class="font-bold">Save Error</p>
-       <p>{{ uploadError }}</p>
-     </div>
-     <div v-if="uploadSuccessMessage" class="my-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4" role="alert">
-       <p class="font-bold">Success</p>
-       <p>{{ uploadSuccessMessage }}</p>
-     </div>
-
-
-    <!-- =================================================== -->
-    <!-- Main Story Creation Area (only if authenticated) -->
-    <!-- =================================================== -->
-    <div v-if="isAuthenticated" class="story-creation-area mt-6">
-      <h1 class="text-3xl md:text-4xl font-bold text-center mb-6 text-gray-800">
-          {{ sessionId ? 'Continue Your Story' : 'Start a New Story' }}
-      </h1>
-
-      <!-- Display Area for Generated Story Content -->
-      <div v-if="storyContent"
-           class="story-display-container bg-white p-4 md:p-6 rounded shadow-md mb-6 border border-gray-200 min-h-[200px]">
-        <h3 class="text-xl font-semibold mb-3 text-gray-700 border-b pb-2">Current Story Progress:</h3>
-        <div class="story-content-text">{{ storyContent }}</div>
-        <p v-if="isCompleted && storyContent" class="mt-4 text-green-600 font-semibold">
-            This story is now complete! You can save it or download it as a PDF below.
-        </p>
-      </div>
-
-      <!-- Input Area for User Prompt/Feedback (Show if story is not completed) -->
-      <div v-if="!isCompleted" class="mb-4">
-        <label for="story-teller-input" class="user-input-label block mb-2">
-          {{ sessionId ? (aiSuggestionForNextTurn ? 'Respond to AI or add your own idea:' : 'Your turn! What happens next, or how should we change the story?') : 'Enter your initial story idea to begin:' }}
-        </label>
-        <textarea
-          id="story-teller-input"
-          v-model="storyTellerInput"
-          :placeholder="aiSuggestionForNextTurn || currentPlaceholder || 'Type your story idea or continuation here...'"
-          rows="5"
-          class="user-input-textarea w-full border rounded px-3 py-2"
-        ></textarea>
-      </div>
-
-      <!-- Action Buttons: Start/Continue/Complete -->
-      <div v-if="!isCompleted" class="flex flex-wrap justify-center items-center gap-4 mb-6">
-
-        <!-- This button serves two purposes: Start and Continue -->
-        <button
-          @click="generateStory"
-          :disabled="!storyTellerInput.trim() || loading || !isAuthenticated"
-          class="action-button primary-button"
-          :title="!isAuthenticated ? 'Please log in first' : (!storyTellerInput.trim() ? 'Enter some text first' : (sessionId ? 'Continue with your input' : 'Start a new story with your idea'))"
-
-          <!-- ADD THIS IDENTIFIER -->
-          <!-- The ID changes based on the button's current function -->
-          :data-testid="sessionId ? 'continue-story-button' : 'start-story-button'"
-        >
-          <svg v-if="loading && !isCompletingStory" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          {{ (loading && !isCompletingStory) ? 'Generating...' : (sessionId ? 'Continue Story' : 'Start Story') }}
-        </button>
-
-        <button
-            v-if="sessionId && !isCompleted"
-            @click="completeStory"
-            :disabled="loading || !isAuthenticated"
-            class="action-button secondary-button"
-            title="Ask the AI to write a final conclusion for the story"
-
-            <!-- ADD THIS IDENTIFIER -->
-            data-testid="complete-story-button"
-        >
-            <svg v-if="loading && isCompletingStory" class="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            {{ (loading && isCompletingStory) ? 'Finalizing...' : 'Complete Story' }}
-        </button>
-      </div>
-      <!-- End Action Buttons -->
-
-      <!-- Save Section (Conditional: Show if story is marked complete, or if content exists before session starts for a quick save) -->
-      <div v-if="isCompleted || (storyContent && !sessionId && !loading && !isGenerating)"
-           class="save-story-section mt-8 p-4 md:p-6 border-t border-gray-300 bg-gray-50 rounded-md">
-        <h3 class="text-xl font-semibold mb-4 text-gray-700">Save Your Masterpiece</h3>
-        <div class="mb-4">
-            <label for="storyNameInput" class="block text-sm font-medium text-gray-800 mb-1">Story Name:</label>
-            <input
-                type="text"
-                id="storyNameInput"
-                v-model="storyName"
-                required
-                @blur="storyNameTouched = true"
-                class="shadow-sm focus:ring-green-500 focus:border-green-500 block w-full sm:text-sm border-gray-300 rounded-md p-2 font-sans"
-                placeholder="Enter a name for your story"
-                aria-required="true"
-            />
-             <p v-if="showNameError" class="text-red-600 text-sm mt-1">Please enter a name for your story.</p>
+        <!-- Loading spinner for AI actions -->
+        <div v-if="loading || uploadLoading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div class="spinner"></div>
+          <p class="text-white ml-3 text-lg">
+            {{ loading && !isCompletingStory ? 'Generating Story...' : (loading && isCompletingStory ? 'Finalizing Story...' : (uploadLoading ? 'Saving...' : 'Processing...')) }}
+          </p>
         </div>
 
-        <div class="flex flex-wrap gap-4">
-          <button
-              @click="uploadToDatabase"
-              :disabled="!isStoryNameValid || uploadLoading || !isAuthenticated || !storyContent"
-              class="action-button bg-green-600 hover:bg-green-700 text-white"
-              title="Save this story to your account"
-          >
-              <svg v-if="uploadLoading" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <!-- ... spinner svg ... -->
-              </svg>
-              {{ uploadLoading ? 'Saving...' : 'Save Story to Database' }}
-          </button>
-
-          <button
-              @click="downloadAsPDF"
-              :disabled="!isStoryNameValid || !storyContent"
-              class="action-button bg-gray-200 hover:bg-gray-300 text-gray-700"
-              title="Download your story as a PDF file"
-          >
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-              Download as PDF
-          </button>
+        <!-- Error/Success Messages for story generation/saving -->
+        <div v-if="generationError" class="my-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
+          <p class="font-bold">Story Generation Error</p>
+          <p>{{ generationError }}</p>
         </div>
-
-        <!-- Upload/Save messages moved inside this section -->
         <div v-if="uploadError" class="my-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
-          <p class="font-bold">Save Error</p><p>{{ uploadError }}</p>
+          <p class="font-bold">Save Error</p>
+          <p>{{ uploadError }}</p>
         </div>
         <div v-if="uploadSuccessMessage" class="my-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4" role="alert">
-          <p class="font-bold">Success!</p><p>{{ uploadSuccessMessage }}</p>
+          <p class="font-bold">Success</p>
+          <p>{{ uploadSuccessMessage }}</p>
         </div>
 
-        <div class="mt-4 text-center">
-          <router-link to="/my-stories" class="text-indigo-600 hover:text-indigo-800 hover:underline">
-            View My Saved Stories
-          </router-link>
-        </div>
-      </div> <!-- End Save Section -->
+        <h1 class="text-3xl md:text-4xl font-bold text-center mb-6 text-gray-800">
+            {{ sessionId ? 'Continue Your Story' : 'Start a New Story' }}
+        </h1>
 
-    </div> <!-- End v-if="isAuthenticated" for main content area -->
+        <div v-if="storyContent" class="story-display-container bg-white p-4 md:p-6 rounded shadow-md mb-6 border border-gray-200 min-h-[200px]">
+          <h3 class="text-xl font-semibold mb-3 text-gray-700 border-b pb-2">Current Story Progress:</h3>
+          <div class="story-content-text whitespace-pre-wrap">{{ storyContent }}</div>
+          <p v-if="isCompleted && storyContent" class="mt-4 text-green-600 font-semibold">
+              This story is now complete! You can save it or download it as a PDF below.
+          </p>
+        </div>
+
+        <!-- Input Area for User Prompt/Feedback (Show if story is not completed) -->
+        <div v-if="!isCompleted" class="mb-4">
+          <label for="story-teller-input" class="user-input-label block mb-2">
+            {{ sessionId ? (aiSuggestionForNextTurn ? 'Respond to AI or add your own idea:' : 'Your turn! What happens next, or how should we change the story?') : 'Enter your initial story idea to begin:' }}
+          </label>
+          <textarea
+            id="story-teller-input"
+            v-model="storyTellerInput"
+            :placeholder="aiSuggestionForNextTurn || currentPlaceholder || 'Type your story idea or continuation here...'"
+            rows="5"
+            class="user-input-textarea w-full border rounded px-3 py-2"
+          ></textarea>
+        </div>
+
+        <!-- Action Buttons: Start/Continue/Complete -->
+        <div v-if="!isCompleted" class="flex flex-wrap justify-center items-center gap-4 mb-6">
+          <button
+            @click="generateStory"
+            :disabled="!storyTellerInput.trim() || loading || !isAuthenticated"
+            class="action-button primary-button"
+            :title="!isAuthenticated ? 'Please log in first' : (!storyTellerInput.trim() ? 'Enter some text first' : (sessionId ? 'Continue with your input' : 'Start a new story with your idea'))"
+            :data-testid="sessionId ? 'continue-story-button' : 'start-story-button'"
+          >
+            {{ (loading && !isCompletingStory) ? 'Generating...' : (sessionId ? 'Continue Story' : 'Start Story') }}
+          </button>
+
+          <button
+              v-if="sessionId && !isCompleted"
+              @click="completeStory"
+              :disabled="loading || !isAuthenticated"
+              class="action-button secondary-button"
+              title="Ask the AI to write a final conclusion for the story"
+              data-testid="complete-story-button"
+          >
+              {{ (loading && isCompletingStory) ? 'Finalizing...' : 'Complete Story' }}
+          </button>
+        </div>
+        <!-- End Action Buttons -->
+
+        <!-- Save Section (Show if story is marked complete) -->
+        <div v-if="isCompleted" class="save-story-section mt-8 p-4 md:p-6 border-t border-gray-300 bg-gray-50 rounded-md">
+          <h3 class="text-xl font-semibold mb-4 text-gray-700">Save Your Masterpiece</h3>
+          <div class="mb-4">
+              <label for="storyNameInput" class="block text-sm font-medium text-gray-800 mb-1">Story Name:</label>
+              <input
+                  type="text"
+                  id="storyNameInput"
+                  v-model="storyName"
+                  required
+                  @blur="storyNameTouched = true"
+                  class="shadow-sm focus:ring-green-500 focus:border-green-500 block w-full sm:text-sm border-gray-300 rounded-md p-2 font-sans"
+                  placeholder="Enter a name for your story"
+                  aria-required="true"
+              />
+               <p v-if="showNameError" class="text-red-600 text-sm mt-1">Please enter a name for your story.</p>
+          </div>
+
+          <div class="flex flex-wrap gap-4">
+            <button
+                @click="uploadToDatabase"
+                :disabled="!isStoryNameValid || uploadLoading || !isAuthenticated || !storyContent"
+                class="action-button bg-green-600 hover:bg-green-700 text-white"
+                title="Save this story to your account"
+            >
+                {{ uploadLoading ? 'Saving...' : 'Save Story to Database' }}
+            </button>
+
+            <button
+                @click="downloadAsPDF"
+                :disabled="!isStoryNameValid || !storyContent"
+                class="action-button bg-gray-200 hover:bg-gray-300 text-gray-700"
+                title="Download your story as a PDF file"
+            >
+                Download as PDF
+            </button>
+          </div>
+
+          <div class="mt-4 text-center">
+            <router-link to="/my-stories" class="text-indigo-600 hover:text-indigo-800 hover:underline">
+              View My Saved Stories
+            </router-link>
+          </div>
+        </div> <!-- End Save Section -->
+
+      </div> <!-- End v-if="isAuthenticated" for main content area -->
+    </div> <!-- End v-else for auth loading -->
   </div> <!-- End Root create-story-page div -->
 </template>
 

@@ -1,10 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-
-// --- A flag to prevent the logic from running more than once on the initial load ---
-let hasProcessedGhostLogin = false;
-
-// --- View Imports ---
 import CreateStory from '../views/CreateStory.vue';
 import CreateNarrative from '../views/CreateNarrative.vue';
 import CreatePicture from '../views/CreatePicture.vue';
@@ -29,49 +24,48 @@ const router = createRouter({
   routes
 });
 
-// --- THIS IS THE NEW, MORE POWERFUL NAVIGATION GUARD ---
-router.beforeEach((to, from, next) => {
-  // --- Part 1: Ghost Login Processing (The Shortcut) ---
-  // This block will only run ONCE when the user first lands on the site.
-  if (!hasProcessedGhostLogin && to.query.ghost_member_uuid) {
-    console.log('[Router Guard] Detected Ghost login parameters in URL. Processing...');
+// --- THE DEFINITIVE ASYNC ROUTER GUARD ---
+// This guard now blocks navigation until the Ghost login process is fully complete.
+router.beforeEach(async (to, from, next) => {
+  // It's important to get a fresh instance of the store inside the guard.
+  const authStore = useAuthStore();
+  const ghostUserId = to.query.ghost_member_uuid as string | undefined;
 
-    // Set the flag to true so this logic doesn't run on subsequent navigations
-    hasProcessedGhostLogin = true;
+  // Check if this is a Ghost login redirect by looking for the UUID in the URL.
+  if (ghostUserId) {
+    console.log('[Router Guard] Detected Ghost login parameters in URL. Awaiting processing...');
+    try {
+      // AWAIT the entire login process to complete. The user will not navigate
+      // to the next page until this promise resolves.
+      await authStore.processGhostLogin({
+        userId: ghostUserId,
+        userEmail: to.query.ghost_member_email as string | undefined,
+        userName: to.query.ghost_member_name as string | undefined,
+        userStatus: to.query.ghost_member_status as string | undefined,
+      });
 
-    // Get a direct reference to the auth store
-    const authStore = useAuthStore();
+      console.log('[Router Guard] Ghost login successful. Cleaning URL and proceeding to navigation.');
 
-    // Extract all the data from the URL
-    const userData = {
-      userId: to.query.ghost_member_uuid as string,
-      userEmail: to.query.ghost_member_email as string | undefined,
-      userName: to.query.ghost_member_name as string | undefined,
-      userStatus: to.query.ghost_member_status as string | undefined,
-    };
+      // Clean the URL query parameters after successful login to avoid reprocessing.
+      const newQuery = { ...to.query };
+      delete newQuery.ghost_member_uuid;
+      delete newQuery.ghost_member_email;
+      delete newQuery.ghost_member_name;
+      delete newQuery.ghost_member_status;
 
-    // Call the Pinia action to process the login and get the backend token.
-    // We don't need to wait for it to finish here.
-    authStore.processGhostLogin(userData);
+      // Proceed with the navigation, but with a clean URL. `replace: true` prevents
+      // the user from hitting the "back" button and re-triggering the login.
+      next({ path: to.path, query: newQuery, replace: true });
 
-    // Clean the URL by removing the query parameters, then proceed.
-    // This provides a much better user experience.
-    return next({ ...to, query: {} });
-  }
-
-  // --- Part 2: Admin Route Protection ---
-  // This is your existing logic for protecting the admin page.
-  if (to.meta.requiresAuth) {
-    if (localStorage.getItem('isAdmin') === 'true') {
-      return next(); // Proceed to the admin page
-    } else {
-      return next('/admin-login'); // Redirect to admin login
+    } catch (error) {
+      console.error('[Router Guard] Ghost login process failed.', error);
+      // If login fails, redirect to the home page to show an error message.
+      next('/');
     }
+  } else {
+    // This is not a Ghost login redirect, so proceed with normal navigation immediately.
+    next();
   }
-
-  // --- Part 3: Default Case ---
-  // If no special conditions are met, just proceed with the navigation.
-  return next();
 });
 
 export default router;

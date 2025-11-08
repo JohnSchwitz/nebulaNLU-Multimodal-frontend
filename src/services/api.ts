@@ -1,128 +1,90 @@
 import axios from 'axios';
-import type { AxiosResponse, AxiosRequestConfig } from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 
 // --- Configuration ---
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const AUTH_TOKEN_STORAGE_KEY = 'app_auth_token';
 console.log(`API Service configured for URL: ${API_URL}`);
 
-// --- Axios Client Setup (No changes needed here) ---
+// --- Axios Client Setup ---
 const apiClient = axios.create({
   baseURL: API_URL,
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: false,
 });
 
-// --- Interceptors (No changes needed here) ---
-apiClient.interceptors.request.use(/* ... your existing interceptor is perfect ... */);
-apiClient.interceptors.response.use(/* ... your existing interceptor is fine ... */);
+// --- CRITICAL: Request Interceptor ---
+// This block runs BEFORE every single API request is sent.
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+      console.log('[API Interceptor] Authorization header added to request.');
+    } else {
+      console.warn('[API Interceptor] No auth token found for this request.');
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
-// --- TypeScript Interfaces (SIMPLIFIED) ---
-// Payloads no longer need user_id
-interface StartStoryPayload {
-  initial_prompt: string;
-}
-interface ContinueStoryPayload {
-  session_id: string;
-  feedback: string;
-}
-interface CompleteStoryPayload {
-  session_id: string;
-}
-interface SaveStoryPayload {
-  story_name: string;
-  story_content: string;
-  session_id?: string | null;
-}
-interface PdfStoryPayload {
-  story_name: string;
-  story_content: string;
-}
+// --- TypeScript Interfaces ---
 interface GhostAuthPayload {
   ghost_user_id: string;
+  name?: string | null;
+  email?: string | null;
 }
 
-// Response interfaces to match FastAPI models
-interface AuthTokenResponse {
-  token: string;
-}
-interface StorySegmentResponse {
-  session_id: string;
-  story: string; // Ensure this matches the backend model field name
-  iteration: number;
-  is_complete: boolean;
-  next_prompt_for_user: string;
-}
-interface StoryCompleteResponse {
-  session_id: string;
-  full_story: string;
-  iteration: number;
-  is_complete: boolean;
-}
-interface SaveResponse {
-  story_id: string;
-  message: string;
+interface UiTextsResponse {
+    placeholderPrompts: string[];
+    initialStoryGuidance: string;
 }
 
-// --- API Method Definitions (SIMPLIFIED) ---
+// --- API Method Definitions ---
 const api = {
-  // ADD THIS FUNCTION
-  async getUiTexts(): Promise<any> {
-    // This endpoint might not exist yet on your backend, but we can add it.
-    // For now, let's return a default to prevent the error.
-    // In a real scenario, you would create a '/api/ui/texts' route in FastAPI.
-    console.warn("Using mock UI texts. Create a real endpoint for this.");
-    return Promise.resolve({
-        placeholderPrompts: ["What amazing adventure awaits?", "Tell me more..."],
-        initialStoryGuidance: "Welcome! Please enter your story idea below to begin this epic journey."
-    });
-  },
-
-  async authenticateGhostUser(data: GhostAuthPayload): Promise<AuthTokenResponse> {
-    const response = await apiClient.post<AuthTokenResponse>('/api/auth/ghost-token', data);
+  // Authentication
+  async authenticateGhostUser(data: GhostAuthPayload): Promise<{ token: string }> {
+    const response = await apiClient.post<{ token: string }>('/api/auth/ghost-token', data);
     return response.data;
   },
 
-  async startStory(data: StartStoryPayload): Promise<StorySegmentResponse> {
-    const response = await apiClient.post<StorySegmentResponse>('/api/story/start', data);
+  // UI Texts (Now a real endpoint)
+  async getUiTexts(): Promise<UiTextsResponse> {
+    const response = await apiClient.get<UiTextsResponse>('/api/ui/texts');
     return response.data;
   },
 
-  async continueStory(data: ContinueStoryPayload): Promise<StorySegmentResponse> {
-    const response = await apiClient.post<StorySegmentResponse>('/api/story/continue', data);
+  // Story Methods
+  async startStory(data: { initial_prompt: string }): Promise<any> {
+    const response = await apiClient.post('/api/story/start', data);
     return response.data;
   },
 
-  async completeStory(data: CompleteStoryPayload): Promise<StoryCompleteResponse> {
-    const response = await apiClient.post<StoryCompleteResponse>('/api/story/complete', data);
+  async continueStory(data: { session_id: string; feedback: string }): Promise<any> {
+    const response = await apiClient.post('/api/story/continue', data);
     return response.data;
   },
 
-  async saveStory(data: SaveStoryPayload): Promise<SaveResponse> {
-    const response = await apiClient.post<SaveResponse>('/api/story/save', data);
+  async completeStory(data: { session_id: string }): Promise<any> {
+    const response = await apiClient.post('/api/story/complete', data);
     return response.data;
   },
 
-  async getUserStories(): Promise<any[]> {
-    // The user is identified by the token, no need to send ID
-    const response = await apiClient.get('/api/story/user/stories');
+  async saveStory(data: { story_name: string; story_content: string; session_id?: string | null }): Promise<any> {
+    const response = await apiClient.post('/api/story/save', data);
     return response.data;
   },
 
-  async generateStoryPDF(data: PdfStoryPayload): Promise<Blob> {
+  async generateStoryPDF(data: { story_name: string; story_content: string }): Promise<Blob> {
     const response = await apiClient.post('/api/story/pdf/story', data, { responseType: 'blob' });
-    if (!(response.data instanceof Blob)) {
-      throw new Error("Invalid PDF response data from server.");
-    }
     return response.data;
   },
-
-  // Other methods like getUiTexts, getAdminSettings etc. would follow the same pattern.
-  // The key is that they no longer need to send a user_id in the payload or query string.
 };
 
-// Generic error handling wrapper (optional but good practice)
+// Generic error handling wrapper
 Object.keys(api).forEach((key) => {
     const originalFunc = api[key];
     api[key] = async (...args) => {
@@ -137,8 +99,3 @@ Object.keys(api).forEach((key) => {
 });
 
 export default api;
-
-
-
-
-

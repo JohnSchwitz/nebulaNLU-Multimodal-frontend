@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { mount } from '@vue/test-utils';
 
 // Import the component to ensure it's importable by the test runner
 import CreateStory from '@/views/CreateStory.vue';
@@ -19,4 +20,12 @@ describe('CreateStory.vue', () => {
     expect(true).toBe(true);
   });
 
+  it('should render a generate button', () => {
+    // Mount the component to a virtual DOM
+    const wrapper = mount(CreateStory);
+
+    // Find the button and check that it exists
+    const button = wrapper.find('button');
+    expect(button.exists()).toBe(true);
+  });
 });
