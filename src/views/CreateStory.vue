@@ -36,13 +36,20 @@ const uploadError = ref<string | null>(null);
 const uploadSuccessMessage = ref<string | null>(null);
 const storyNameTouched = ref(false);
 
+// --- Validation Constants ---
+const MIN_PROMPT_LENGTH = 10;
+
 // --- Computed Properties for UI Logic ---
 const isStoryNameValid = computed(() => storyName.value.trim() !== '');
 const showNameError = computed(() => storyNameTouched.value && !isStoryNameValid.value);
+const isPromptValid = computed(() => storyTellerInput.value.trim().length >= MIN_PROMPT_LENGTH);
 
 // --- API Calls ---
 const generateStory = async () => {
-  if (!storyTellerInput.value.trim() || !isAuthenticated.value) return;
+  // Clean the input to remove leading/trailing whitespace and replace newlines with spaces.
+  const cleanedInput = storyTellerInput.value.trim().replace(/\s+/g, ' ');
+  if (!cleanedInput || !isAuthenticated.value) return;
+
   loading.value = true;
   generationError.value = null;
 
@@ -51,12 +58,12 @@ const generateStory = async () => {
     if (sessionId.value) {
       response = await api.continueStory({
         session_id: sessionId.value,
-        feedback: storyTellerInput.value,
+        feedback: cleanedInput,
       });
       storyContent.value += `\n\n${response.story}`;
     } else {
       response = await api.startStory({
-        initial_prompt: storyTellerInput.value,
+        initial_prompt: cleanedInput,
       });
       sessionId.value = response.session_id;
       storyContent.value = response.story;
@@ -132,26 +139,30 @@ const downloadAsPDF = async () => {
 
 // --- Lifecycle Hook ---
 onMounted(async () => {
-  console.log('[CreateStory.vue] Component mounted.');
+  console.log('[CreateStory.vue] Component mounted. Current auth status:', isAuthenticated.value);
+  // This block handles the case where the user is ALREADY authenticated when they arrive,
+  // for example, by navigating back to the page.
   if (isAuthenticated.value) {
     console.log('[CreateStory.vue] User is already authenticated. Fetching UI texts.');
     try {
       const uiTexts = await api.getUiTexts();
       initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
+      console.log('[CreateStory.vue] Successfully fetched initial guidance on mount.');
     } catch (error) {
       console.error("Failed to fetch UI texts, will use default guidance.", error);
-      // If the API fails, we can set a default message so the app doesn't break.
       initialGuidanceFromAPI.value = "Welcome! Please enter your story idea below to begin.";
     }
   }
 });
 
 watch(isAuthenticated, async (newAuthStatus, oldAuthStatus) => {
+  // This block handles the primary login flow where auth status changes from false to true.
   if (newAuthStatus === true && oldAuthStatus === false) {
     console.log('[CreateStory.vue] Auth status changed to TRUE. Fetching UI texts...');
     try {
       const uiTexts = await api.getUiTexts();
       initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
+      console.log('[CreateStory.vue] Successfully fetched initial guidance via watcher.');
     } catch (error) {
       console.error("Failed to fetch UI texts on auth change.", error);
       initialGuidanceFromAPI.value = "Welcome! Please enter your story idea below to begin.";
@@ -272,16 +283,20 @@ watch(isAuthenticated, async (newAuthStatus, oldAuthStatus) => {
             :placeholder="aiSuggestionForNextTurn || currentPlaceholder || 'Type your story idea or continuation here...'"
             rows="5"
             class="user-input-textarea w-full border rounded px-3 py-2"
+            :class="{ 'border-red-500': storyTellerInput.length > 0 && !isPromptValid }"
           ></textarea>
+          <p v-if="storyTellerInput.length > 0 && !isPromptValid" class="text-red-600 text-sm mt-1">
+            Please enter at least {{ MIN_PROMPT_LENGTH }} characters.
+          </p>
         </div>
 
         <!-- Action Buttons: Start/Continue/Complete -->
         <div v-if="!isCompleted" class="flex flex-wrap justify-center items-center gap-4 mb-6">
           <button
             @click="generateStory"
-            :disabled="!storyTellerInput.trim() || loading || !isAuthenticated"
+            :disabled="!isPromptValid || loading || !isAuthenticated"
             class="action-button primary-button"
-            :title="!isAuthenticated ? 'Please log in first' : (!storyTellerInput.trim() ? 'Enter some text first' : (sessionId ? 'Continue with your input' : 'Start a new story with your idea'))"
+            :title="!isAuthenticated ? 'Please log in first' : (!isPromptValid ? `Please enter at least ${MIN_PROMPT_LENGTH} characters` : (sessionId ? 'Continue with your input' : 'Start a new story with your idea'))"
             :data-testid="sessionId ? 'continue-story-button' : 'start-story-button'"
           >
             {{ (loading && !isCompletingStory) ? 'Generating...' : (sessionId ? 'Continue Story' : 'Start Story') }}
@@ -339,7 +354,7 @@ watch(isAuthenticated, async (newAuthStatus, oldAuthStatus) => {
           </div>
 
           <div class="mt-4 text-center">
-            <router-link to="/my-stories" class="text-indigo-600 hover:text-indigo-800 hover:underline">
+            <router-link to="/download" class="text-indigo-600 hover:text-indigo-800 hover:underline">
               View My Saved Stories
             </router-link>
           </div>

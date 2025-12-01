@@ -43,6 +43,21 @@ interface UiTextsResponse {
     initialStoryGuidance: string;
 }
 
+interface StorySegmentResponse {
+  session_id: string;
+  story: string;
+  iteration: number;
+  is_complete: boolean;
+  next_prompt_for_user: string;
+}
+
+interface StoryCompleteResponse {
+  session_id: string;
+  full_story: string;
+  iteration: number;
+  is_complete: true;
+}
+
 // --- API Method Definitions ---
 const api = {
   // Authentication
@@ -58,18 +73,18 @@ const api = {
   },
 
   // Story Methods
-  async startStory(data: { initial_prompt: string }): Promise<any> {
-    const response = await apiClient.post('/api/story/start', data);
+  async startStory(data: { initial_prompt: string }): Promise<StorySegmentResponse> {
+    const response = await apiClient.post<StorySegmentResponse>('/api/story/start', data);
     return response.data;
   },
 
-  async continueStory(data: { session_id: string; feedback: string }): Promise<any> {
-    const response = await apiClient.post('/api/story/continue', data);
+  async continueStory(data: { session_id: string; feedback: string }): Promise<StorySegmentResponse> {
+    const response = await apiClient.post<StorySegmentResponse>('/api/story/continue', data);
     return response.data;
   },
 
-  async completeStory(data: { session_id: string }): Promise<any> {
-    const response = await apiClient.post('/api/story/complete', data);
+  async completeStory(data: { session_id: string }): Promise<StoryCompleteResponse> {
+    const response = await apiClient.post<StoryCompleteResponse>('/api/story/complete', data);
     return response.data;
   },
 
@@ -82,11 +97,35 @@ const api = {
     const response = await apiClient.post('/api/story/pdf/story', data, { responseType: 'blob' });
     return response.data;
   },
+
+  async getUserStories(): Promise<any[]> {
+    // The backend will identify the user via the JWT token from the interceptor.
+    const response = await apiClient.get('/api/story/stories');
+    return Array.isArray(response.data) ? response.data : [];
+  },
+
+  // Image Methods
+  async generateImageFromStory(data: { prompt: string; user_id: string }): Promise<any> {
+    const response = await apiClient.post('/api/image/generate-from-story', data);
+    return response.data;
+  },
+
+  // Admin Settings
+  async getAdminSettings(userId: string): Promise<any> {
+    // Note: Ensure your backend can authorize this request for the given user_id
+    const response = await apiClient.get(`/api/admin/settings?user_id=${encodeURIComponent(userId)}`);
+    return response.data;
+  },
+
+  async saveAdminSettings(settings: any & { user_id: string }): Promise<any> {
+    const response = await apiClient.post(`/api/admin/settings`, settings);
+    return response.data;
+  },
 };
 
 // Generic error handling wrapper
 Object.keys(api).forEach((key) => {
-    const originalFunc = api[key];
+    const originalFunc = api[key as keyof typeof api];
     api[key] = async (...args) => {
         try {
             return await originalFunc(...args);
