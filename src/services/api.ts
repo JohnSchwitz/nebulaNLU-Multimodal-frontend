@@ -105,8 +105,11 @@ const api = {
   },
 
   // Image Methods
-  async generateImageFromStory(data: { prompt: string; user_id: string }): Promise<any> {
-    const response = await apiClient.post('/api/image/generate-from-story', data);
+  async generateImageFromStory(data: { prompt: string; user_id: string }): Promise<Blob> {
+    // CRITICAL: We must add { responseType: 'blob' } so Axios handles the binary stream correctly
+    const response = await apiClient.post('/api/image/generate-from-story', data, {
+      responseType: 'blob'
+    });
     return response.data;
   },
 

@@ -49,7 +49,7 @@
     <div v-if="isAuthenticated">
         <div class="mb-6 text-center">
             <h1 class="text-3xl font-bold mb-4">Create AI-Generated Images</h1>
-            <p class="text-lg">Use DALL-E to bring your visual ideas to life.</p>
+            <p class="text-lg">Use Vertex AI to bring your visual ideas to life.</p>
         </div>
 
         <!-- Input Area -->
@@ -65,42 +65,21 @@
                  <p class="text-xs text-gray-500 mt-1">Minimum 10 characters for the description.</p>
             </div>
             <div class="flex justify-end gap-4 mt-4">
-                <button @click="generateImageWithDalle" :disabled="!canGenerate || isGenerating"
+                <button @click="generateImage" :disabled="!canGenerate || isGenerating"
                     class="bg-gray-800 text-white px-6 py-3 rounded font-bold hover:bg-gray-700 disabled:opacity-50">
-                    {{ isGenerating ? 'Generating...' : 'Generate Image' }}
+                    {{ isGenerating ? 'Generating...' : 'Generate & Download Image' }}
                 </button>
             </div>
         </div>
-
-        <!-- Generated Image Display -->
-        <div v-if="generatedImageUrl && !isGenerating" class="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 class="text-2xl font-bold mb-4">Generated Image</h2>
-            <div class="flex flex-col items-center">
-                <img
-                  :src="generatedImageUrl"
-                  :alt="imageTitle || 'Generated AI image'"
-                  class="max-w-full max-h-[512px] w-auto h-auto border rounded shadow-lg mb-4"
-                  @error="handleImageDisplayError"
-                />
-                <div class="w-full flex justify-center gap-4 mt-4">
-                    <button @click="downloadGeneratedImage"
-                            class="bg-gray-600 text-white px-4 py-2 rounded font-bold hover:bg-gray-700">
-                        Download This Image
-                    </button>
-                    <!-- Save to Gallery button is removed as per your request -->
-                </div>
-            </div>
-        </div>
-    </div> <!-- End v-if="isAuthenticated" -->
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import api from '@/services/api'; // Ensure this path is correct
-import { useAuthStore } from '@/stores/auth'; // Ensure this path is correct
+import { ref, computed } from 'vue';
+import api from '@/services/api';
+import { useAuthStore } from '@/stores/auth';
 import { storeToRefs } from 'pinia';
-import { saveAs } from 'file-saver'; // For client-side download
 
 // --- Pinia Auth Store ---
 const authStore = useAuthStore();
@@ -114,152 +93,66 @@ const {
 
 // --- Component State ---
 const imageTitle = ref('');
-const imageDescription = ref(''); // This is the user's prompt for DALL-E
-const generatedImageUrl = ref<string | null>(null); // URL of the currently displayed generated image
-
-const isGenerating = ref(false); // To control loading state for generation button
-const error = ref<string | null>(null); // For displaying errors to the user
-const successMessage = ref<string | null>(null); // For displaying success messages
-
-// Helper to clear messages
-const clearMessages = () => {
-  console.log("[CreatePicture.vue] clearMessages called");
-  successMessage.value = null;
-  error.value = null;
-};
+const imageDescription = ref('');
+const isGenerating = ref(false);
+const error = ref<string | null>(null);
+const successMessage = ref<string | null>(null);
 
 // Computed property to enable/disable generation button
 const canGenerate = computed(() => imageDescription.value.trim().length >= 10);
 
-// --- Image Generation Method ---
-const generateImageWithDalle = async () => {
-  console.log("[CreatePicture.vue] generateImageWithDalle function CALLED.");
-  clearMessages();
-
-  console.log("[CreatePicture.vue] Checking auth. isAuthenticated:", isAuthenticated.value, "userId:", userId.value);
-  if (!isAuthenticated.value) {
+// --- Image Generation & Download Method ---
+const generateImage = async () => {
+  if (!isAuthenticated.value || !userId.value) {
     error.value = "Please log in to generate images.";
-    console.warn("[CreatePicture.vue] generateImageWithDalle: Not authenticated.");
-    return;
-  }
-  if (!userId.value) {
-    error.value = "User ID missing. Please re-authenticate.";
-    console.warn("[CreatePicture.vue] generateImageWithDalle: User ID missing.");
-    return;
-  }
-
-  console.log("[CreatePicture.vue] Checking canGenerate:", canGenerate.value);
-  if (!canGenerate.value) {
-    error.value = "Image description must be at least 10 characters long.";
-    console.warn("[CreatePicture.vue] generateImageWithDalle: canGenerate is false.");
-    return;
-  }
-
-  console.log("[CreatePicture.vue] Checking isGenerating:", isGenerating.value);
-  if (isGenerating.value) {
-    console.warn("[CreatePicture.vue] generateImageWithDalle: Already generating an image.");
     return;
   }
 
   isGenerating.value = true;
-  generatedImageUrl.value = null; // Clear previous image before new generation
-  console.log("[CreatePicture.vue] Set isGenerating=true. Starting API call...");
+  error.value = null;
+  successMessage.value = null;
 
   try {
-    const payload = {
+    // 1. Call the API (Returns a Blob)
+    const imageBlob = await api.generateImageFromStory({
       prompt: imageDescription.value.trim(),
-      user_id: userId.value,
-      // engine: 'dalle' // Backend defaults to 'dalle' if DEFAULT_IMAGE_ENGINE is set to 'dalle'
-                       // and no engine is passed in payload by Vue.
-    };
-    console.log("[CreatePicture.vue] Calling api.generateImageFromStory with payload:", JSON.stringify(payload));
+      user_id: userId.value
+    });
 
-    const responseFromApi = await api.generateImageFromStory(payload);
+    // 2. Create a temporary URL for the blob
+    const url = window.URL.createObjectURL(imageBlob);
 
-    console.log("[CreatePicture.vue] RAW response from api.generateImageFromStory:", JSON.parse(JSON.stringify(responseFromApi)));
+    // 3. Create filename
+    const safeTitle = (imageTitle.value.trim() || 'generated_image').replace(/\s+/g, '_');
+    const filename = `${safeTitle}.png`;
 
-    if (responseFromApi && responseFromApi.success && typeof responseFromApi.image_url === 'string' && responseFromApi.image_url.trim() !== '') {
-      console.log("[CreatePicture.vue] SUCCESS from backend. Image URL:", responseFromApi.image_url);
-      generatedImageUrl.value = responseFromApi.image_url;
-      successMessage.value = responseFromApi.message || `Image generated successfully using ${responseFromApi.engine || 'DALL-E'}!`;
-      console.log("[CreatePicture.vue] generatedImageUrl set to:", generatedImageUrl.value);
-    } else {
-      const errorMessage = responseFromApi?.message || responseFromApi?.error || 'Backend response indicates failure, is malformed, or image_url is missing/empty.';
-      console.error('[CreatePicture.vue] API call deemed not successful by frontend logic:', errorMessage, 'Full backend response:', JSON.parse(JSON.stringify(responseFromApi)));
-      throw new Error(errorMessage);
-    }
+    // 4. Create hidden anchor to trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click(); // Trigger download
+
+    // 5. Cleanup
+    window.URL.revokeObjectURL(url);
+    a.remove();
+
+    successMessage.value = "Image generated and download started!";
+
   } catch (err: any) {
-    console.error('[CreatePicture.vue] CATCH BLOCK for generateImageWithDalle:', err);
-    error.value = err.message || 'An unexpected error occurred during image generation.';
+    console.error('[CreatePicture.vue] Generation failed:', err);
+    error.value = "Failed to generate image. Please try again.";
   } finally {
     isGenerating.value = false;
-    console.log("[CreatePicture.vue] Set isGenerating=false. Finished generation attempt.");
   }
 };
-
-// --- Image Download Method ---
-// CreatePicture.vue - <script setup lang="ts">
-
-const downloadGeneratedImage = () => {
-  console.log("[CreatePicture.vue] downloadGeneratedImage function CALLED.");
-  if (!generatedImageUrl.value) {
-    error.value = "No image to download. Please generate an image first.";
-    console.warn("[CreatePicture.vue] downloadGeneratedImage: No image URL available.");
-    return;
-  }
-  try {
-    const imageUrl = generatedImageUrl.value; // The URL from DALL-E
-    const title = imageTitle.value.trim() || 'ai-generated-dalle-image';
-    const filename = `${title.replace(/\s+/g, '_')}.png`; // Assume png, DALL-E usually provides png
-
-    console.log(`[CreatePicture.vue] Attempting to download: ${imageUrl} as ${filename}`);
-
-    const link = document.createElement('a');
-    link.href = imageUrl;
-    link.setAttribute('download', filename); // Suggests a filename to the browser
-
-    // For cross-origin downloads where the server doesn't send Content-Disposition,
-    // and to bypass some CORS issues with programmatic fetches, this approach is common.
-    // However, its success can depend on browser security policies and server headers.
-    // It does NOT fetch the image via JS; it tells the browser to navigate/download.
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link); // Clean up the link
-
-    // We can't be 100% sure the download started successfully with this method,
-    // as it relies on browser behavior for cross-origin 'download' attribute.
-    successMessage.value = "Download initiated. Please check your browser's downloads.";
-    console.log("[CreatePicture.vue] Download link clicked for:", imageUrl);
-
-  } catch (e: any) { // This catch is unlikely to be hit for the anchor trick unless createElement fails
-    console.error("Error setting up DALL-E image download link:", e);
-    error.value = "Could not initiate image download. Try right-clicking the image to save.";
-  }
-};
-
-const handleImageDisplayError = (event: Event) => {
-    console.error("Error loading generated image into <img> tag. Source:", (event.target as HTMLImageElement)?.src);
-    error.value = "The generated image could not be displayed. The URL might be invalid or temporarily unavailable. Try generating again or check the console for the URL.";
-    // Optionally set generatedImageUrl to null or a placeholder if the URL is truly bad
-    // generatedImageUrl.value = '/placeholder-image-error.png';
-};
-
-// --- Lifecycle Hooks ---
-onMounted(() => {
-    console.log("[CreatePicture.vue] Mounted. isAuthenticated:", isAuthenticated.value, "userId:", userId.value);
-    if (!isAuthenticated.value) {
-        console.warn("[CreatePicture.vue] User not authenticated on mount. Image generation will be disabled until login.");
-    }
-    // No data fetching needed on mount for this simplified component
-});
 </script>
 
 <style scoped>
 .spinner {
   border: 4px solid rgba(255, 255, 255, 0.3);
   border-radius: 50%;
-  border-top: 4px solid #fff; /* White spinner on dark overlay */
+  border-top: 4px solid #fff;
   width: 40px;
   height: 40px;
   animation: spin 1s linear infinite;
@@ -268,41 +161,7 @@ onMounted(() => {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
-
-/* Base message styling */
-.message-base {
-    padding: .75rem 1.25rem;
-    margin-bottom: 1rem;
-    border: 1px solid transparent;
-    border-radius: .25rem;
-}
-.success-message {
-    @apply message-base; /* If using Tailwind apply directive */
-    color: #155724; /* Dark green text */
-    background-color: #d4edda; /* Light green background */
-    border-color: #c3e6cb; /* Green border */
-}
-.error-message {
-    @apply message-base; /* If using Tailwind apply directive */
-    color: #721c24; /* Dark red text */
-    background-color: #f8d7da; /* Light red background */
-    border-color: #f5c6cb; /* Red border */
-}
-.note {
-    font-size: 0.875rem;
-    color: #6b7280; /* text-gray-500 */
-}
-
-/* Font styling from CreateStory.vue - apply if needed */
-/*
-@font-face {
-    font-family: 'Didot';
-    src: url('@/assets/fonts/TheanoDidot-Regular.ttf');
-    font-weight: normal;
-    font-style: normal;
-}
 .font-didot {
    font-family: 'Didot', 'Bodoni MT', 'Hoefler Text', Garamond, 'Times New Roman', serif;
 }
-*/
 </style>
