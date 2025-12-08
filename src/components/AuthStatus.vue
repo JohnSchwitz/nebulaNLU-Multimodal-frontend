@@ -96,9 +96,9 @@ async function handleLogout() {
   }
 }
 
-async function handleRefresh() {
-  await authStore.refreshAuth()
-}
+// async function handleRefresh() {
+//   await authStore.refreshAuth()
+// }
 
 // Close menu when clicking outside
 function handleClickOutside(event: MouseEvent) {

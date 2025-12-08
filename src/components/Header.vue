@@ -35,9 +35,9 @@ import { useAuthStore } from '@/stores/auth'
 const authStore = useAuthStore()
 
 // Check authentication when header mounts (happens once when app loads)
-onMounted(() => {
-  authStore.checkAuthStatus()
-})
+// onMounted(() => {
+//   authStore.checkAuthStatus()
+// })
 </script>
 
 <style scoped>

@@ -4,9 +4,7 @@ import { useAuthStore } from '@/stores/auth';
 import { storeToRefs } from 'pinia';
 import api from '@/services/api';
 
-// ========================================
-// PINIA STORE SETUP
-// ========================================
+// PINIA STORE
 const authStore = useAuthStore();
 const {
   isAuthenticated,
@@ -16,9 +14,7 @@ const {
   error: authError
 } = storeToRefs(authStore);
 
-// ========================================
-// COMPONENT STATE
-// ========================================
+// STATE
 const storyTellerInput = ref('');
 const storyContent = ref('');
 const storyName = ref('');
@@ -28,8 +24,6 @@ const isCompleted = ref(false);
 const currentPlaceholder = ref('Type your story idea or continuation here...');
 const aiSuggestionForNextTurn = ref('');
 const initialGuidanceFromAPI = ref('');
-
-// UI & Loading State
 const loading = ref(false);
 const isCompletingStory = ref(false);
 const uploadLoading = ref(false);
@@ -38,55 +32,41 @@ const uploadError = ref<string | null>(null);
 const uploadSuccessMessage = ref<string | null>(null);
 const storyNameTouched = ref(false);
 
-// ========================================
-// VALIDATION CONSTANTS
-// ========================================
+// VALIDATION
 const MIN_PROMPT_LENGTH = 10;
-
-// ========================================
-// COMPUTED PROPERTIES
-// ========================================
 const isStoryNameValid = computed(() => storyName.value.trim() !== '');
 const showNameError = computed(() => storyNameTouched.value && !isStoryNameValid.value);
 const isPromptValid = computed(() => storyTellerInput.value.trim().length >= MIN_PROMPT_LENGTH);
-
-// Process guidance text with user name
 const processedGuidance = computed(() => {
   const userName = authUserName.value || 'Storyteller';
   return initialGuidanceFromAPI.value.replace(/\{\{name\}\}/g, userName);
 });
 
-// ========================================
-// SIMPLE CLEANING (Minimal)
-// ========================================
-
-/**
- * Extract NEXT_PROMPT from story
- */
+// UTILITIES
 const cleanStory = (rawStory: string): { story: string; prompt: string } => {
-  // Split on NEXT_PROMPT
   const parts = rawStory.split(/NEXT_PROMPT:\s*/i);
-
   if (parts.length > 1) {
-    return {
-      story: parts[0].trim(),
-      prompt: parts[1].trim()
-    };
+    return { story: parts[0].trim(), prompt: parts.slice(1).join('NEXT_PROMPT:').trim() };
   }
-
-  return {
-    story: rawStory.trim(),
-    prompt: ''
-  };
+  return { story: rawStory.trim(), prompt: '' };
 };
 
-// ========================================
-// API FUNCTIONS
-// ========================================
+const formatSuggestion = (suggestion: string): string => {
+  const paragraphs = suggestion.split(/\n\n+/);
+  return paragraphs
+    .map((para, index) => {
+      const trimmed = para.trim();
+      if (!trimmed) return '';
+      if (index === 0) {
+        return `<p class="mb-3 text-gray-800 leading-relaxed">${trimmed}</p>`;
+      }
+      return `<p class="mb-2 text-gray-700 leading-relaxed italic">${trimmed}</p>`;
+    })
+    .filter(p => p)
+    .join('');
+};
 
-/**
- * Generate or continue story
- */
+// GENERATE STORY
 const generateStory = async () => {
   const cleanedInput = storyTellerInput.value.trim();
   if (!cleanedInput || !isAuthenticated.value) return;
@@ -98,34 +78,42 @@ const generateStory = async () => {
     let response;
 
     if (sessionId.value) {
-      // Continue
       console.log('📝 Continuing story');
       response = await api.continueStory({
         session_id: sessionId.value,
         feedback: cleanedInput,
       });
 
-      const { story, prompt } = cleanStory(response.story);
-      storyContent.value += `\n\n${story}`;
-      aiSuggestionForNextTurn.value = prompt;
+      // APPEND to existing story
+      if (response.next_prompt_for_user) {
+        storyContent.value = storyContent.value + `\n\n${response.story}`;
+        aiSuggestionForNextTurn.value = response.next_prompt_for_user;
+      } else {
+        const { story, prompt } = cleanStory(response.story);
+        storyContent.value = storyContent.value + `\n\n${story}`;
+        aiSuggestionForNextTurn.value = prompt;
+      }
 
     } else {
-      // Start
       console.log('🆕 Starting story');
-      response = await api.startStory({
-        initial_prompt: cleanedInput,
-      });
+      response = await api.startStory({ initial_prompt: cleanedInput });
 
-      const { story, prompt } = cleanStory(response.story);
+      // SET story first time
       sessionId.value = response.session_id;
-      storyContent.value = story;
-      aiSuggestionForNextTurn.value = prompt;
+
+      if (response.next_prompt_for_user) {
+        storyContent.value = response.story;
+        aiSuggestionForNextTurn.value = response.next_prompt_for_user;
+      } else {
+        const { story, prompt } = cleanStory(response.story);
+        storyContent.value = story;
+        aiSuggestionForNextTurn.value = prompt;
+      }
     }
 
     currentIteration.value = response.iteration || currentIteration.value + 1;
     storyTellerInput.value = '';
-
-    console.log('✅ Story generated');
+    console.log('✅ Story generated -', storyContent.value.length, 'chars');
 
   } catch (error: any) {
     console.error('❌ Error:', error);
@@ -135,9 +123,7 @@ const generateStory = async () => {
   }
 };
 
-/**
- * Complete story
- */
+// COMPLETE STORY
 const completeStory = async () => {
   if (!sessionId.value || !isAuthenticated.value) return;
 
@@ -147,18 +133,25 @@ const completeStory = async () => {
 
   try {
     console.log('🏁 Completing story');
+    console.log('📊 BEFORE completion - storyContent length:', storyContent.value.length);
+
     const response = await api.completeStory({ session_id: sessionId.value });
 
-    // Remove NEXT_PROMPT if present
-    let finalStory = response.full_story;
-    if (finalStory.includes('NEXT_PROMPT:')) {
-      finalStory = finalStory.split(/NEXT_PROMPT:/i)[0].trim();
-    }
+    console.log('📊 Backend response.full_story length:', response.full_story?.length || 0);
+
+    // Backend returns COMPLETE story
+    let finalStory = response.full_story || storyContent.value;
+
+    // Remove ALL occurrences of NEXT_PROMPT and everything after each one
+    // Split by NEXT_PROMPT, keep only story parts, rejoin
+    const storyParts = finalStory.split(/NEXT_PROMPT:[^\n]*(\n\n|$)/gi);
+    finalStory = storyParts.join('\n\n').trim();
 
     storyContent.value = finalStory;
     isCompleted.value = true;
     currentIteration.value = response.iteration;
 
+    console.log('📊 AFTER completion - storyContent length:', storyContent.value.length);
     console.log('✅ Story completed');
 
   } catch (error: any) {
@@ -170,9 +163,7 @@ const completeStory = async () => {
   }
 };
 
-/**
- * Save story
- */
+// SAVE STORY
 const uploadToDatabase = async () => {
   if (!isStoryNameValid.value || !storyContent.value || !isAuthenticated.value) return;
 
@@ -187,10 +178,8 @@ const uploadToDatabase = async () => {
       story_content: storyContent.value,
       session_id: sessionId.value,
     });
-
     uploadSuccessMessage.value = response.message;
     console.log('✅ Saved');
-
   } catch (error: any) {
     console.error('❌ Error:', error);
     uploadError.value = error.message || 'Save failed';
@@ -199,9 +188,7 @@ const uploadToDatabase = async () => {
   }
 };
 
-/**
- * Download PDF
- */
+// DOWNLOAD PDF
 const downloadAsPDF = async () => {
   if (!isStoryNameValid.value || !storyContent.value) return;
 
@@ -220,31 +207,23 @@ const downloadAsPDF = async () => {
     a.click();
     window.URL.revokeObjectURL(url);
     a.remove();
-
     console.log('✅ PDF downloaded');
-
   } catch (error: any) {
     console.error('❌ Error:', error);
     uploadError.value = `PDF failed: ${error.message}`;
   }
 };
 
-// ========================================
 // LIFECYCLE
-// ========================================
-
 onMounted(async () => {
   console.log('[CreateStory] Mounted');
-  console.log('Auth:', isAuthenticated.value);
-  console.log('User:', authUserName.value);
-
   if (isAuthenticated.value) {
     try {
       const uiTexts = await api.getUiTexts();
       initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
       console.log('✅ UI texts loaded');
     } catch (error) {
-      console.error('❌ Failed to load UI texts:', error);
+      console.error('❌ Failed:', error);
       initialGuidanceFromAPI.value = "Welcome {{name}}! Start your story.";
     }
   }
@@ -252,7 +231,6 @@ onMounted(async () => {
 
 watch(isAuthenticated, async (newAuth, oldAuth) => {
   if (newAuth === true && oldAuth === false) {
-    console.log('Auth changed to true');
     try {
       const uiTexts = await api.getUiTexts();
       initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
@@ -327,10 +305,12 @@ watch(authUserName, (newName) => {
             <p v-else>Enter your initial story idea to start our adventure!</p>
           </div>
 
+          <!-- Enhanced (formats multi-paragraph suggestions) -->
           <div v-else-if="!isCompleted" class="instruction-box-text">
-            <p v-if="aiSuggestionForNextTurn" class="italic">
-              <strong>Suggestion for your next contribution:</strong> "{{ aiSuggestionForNextTurn }}"
-            </p>
+            <div v-if="aiSuggestionForNextTurn" class="ai-suggestion">
+              <p class="font-semibold mb-2">💡 Ideas for Your Next Turn:</p>
+              <div class="suggestion-content" v-html="formatSuggestion(aiSuggestionForNextTurn)"></div>
+            </div>
             <p v-else>
               What happens next? Add to the story or suggest a new direction!
             </p>
@@ -564,5 +544,36 @@ watch(authUserName, (newName) => {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+.ai-suggestion {
+  background: rgba(255, 255, 255, 0.3);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border-left: 4px solid #4a6fa5;
+}
+
+.suggestion-content {
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+.suggestion-content p {
+  margin-bottom: 0.75rem;
+}
+
+.suggestion-content p:last-child {
+  margin-bottom: 0;
+}
+
+.greeting-text {
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  color: #2c3e50;
+}
+
+.greeting-text strong {
+  color: #4a6fa5;
+  font-weight: 600;
 }
 </style>

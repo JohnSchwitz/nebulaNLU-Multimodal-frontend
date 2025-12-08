@@ -27,6 +27,20 @@ const router = createRouter({
 // --- THE DEFINITIVE ASYNC ROUTER GUARD ---
 // This guard now blocks navigation until the Ghost login process is fully complete.
 router.beforeEach(async (to, from, next) => {
+
+  // CAPTURE FULL URL AND PARAMS
+  console.log('=' .repeat(60));
+  console.log('🔍 ROUTER GUARD - FULL URL DEBUG');
+  console.log('=' .repeat(60));
+  console.log('Full URL:', window.location.href);
+  console.log('Path:', to.path);
+  console.log('Query params:', to.query);
+  console.log('ghost_member_uuid:', to.query.ghost_member_uuid);
+  console.log('ghost_member_email:', to.query.ghost_member_email);
+  console.log('ghost_member_name:', to.query.ghost_member_name);
+  console.log('ghost_member_status:', to.query.ghost_member_status);
+  console.log('=' .repeat(60));
+
   // It's important to get a fresh instance of the store inside the guard.
   const authStore = useAuthStore();
   const ghostUserId = to.query.ghost_member_uuid as string | undefined;
