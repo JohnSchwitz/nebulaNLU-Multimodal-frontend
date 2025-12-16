@@ -1,128 +1,219 @@
 // tests/components/CreateStory.spec.ts
 
 import { mount, flushPromises } from '@vue/test-utils';
-import { nextTick } from 'vue';
-import { createPinia } from 'pinia';
+import { reactive } from 'vue';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useRoute, useRouter } from 'vue-router';
+import { createPinia, setActivePinia } from 'pinia';
+import { useAuthStore } from '@/stores/auth';
 import CreateStory from '@/views/CreateStory.vue';
 import api from '@/services/api';
 
-// 1. Mock the entire API service
+// Mock the entire API service
 vi.mock('@/services/api');
 
-// 2. Mock the vue-router module to control its composables
-vi.mock('vue-router');
-
-// Note: We are no longer mocking vue-router globally. It will be mocked per test.
 describe('CreateStory.vue', () => {
-  // A sample token to be used in tests
-  const FAKE_JWT = 'fake-jwt-for-testing';
+  let authStore: ReturnType<typeof useAuthStore>;
 
   beforeEach(() => {
-    // Reset mocks and localStorage before each test
-    vi.resetAllMocks();
+    // Create a fresh Pinia instance for each test
+    setActivePinia(createPinia());
+
+    // Get the actual auth store instance
+    authStore = useAuthStore();
+
+    // Reset mocks and localStorage
+    vi.clearAllMocks();
     localStorage.clear();
 
-    // Mock the successful response for the UI texts API
+    // Mock the UI texts API (called on mount)
     vi.mocked(api.getUiTexts).mockResolvedValue({
       placeholderPrompts: ['A test prompt...'],
-      initialStoryGuidance: 'Tell me a test story.',
+      initialStoryGuidance: 'Tell me a test story for {{name}}.',
     });
   });
 
-  it('should not call authentication when no URL parameters are present', async () => {
-    // Mount the component without any special setup
-    vi.mocked(useRoute).mockReturnValue({ query: {} });
-    vi.mocked(useRouter).mockReturnValue({ push: vi.fn() } as any);
-
-    const wrapper = mount(CreateStory, {
-      global: {
-        plugins: [createPinia()], // Provide Pinia
-      },
-    });
-    await nextTick();
+  it('should display authentication prompt when user is not authenticated', async () => {
+    // ARRANGE: User is not authenticated (default state)
+    const wrapper = mount(CreateStory);
     await flushPromises();
 
-    // Assert that the authentication function was NOT called
-    expect(api.authenticateGhostUser).not.toHaveBeenCalled();
+    // ASSERT: Should show login prompt
+    expect(wrapper.text()).toContain('Please log in via Ghost');
   });
 
-  it('should call authentication and store token when Ghost member params are in the URL', async () => {
-    // 3. Mock the authentication API call to return our fake token
-    vi.mocked(api.authenticateGhostUser).mockResolvedValue({ token: FAKE_JWT });
+  it('should display welcome message when user is authenticated', async () => {
+    // ARRANGE: Set authenticated user
+    authStore.userId = 'test-user-id';
+    authStore.userName = 'Test User';
+    authStore.authToken = 'fake-jwt-token';
+    localStorage.setItem('app_auth_token', 'fake-jwt-token');
 
-    // 4. Mock the return value of useRoute() for THIS test
-    vi.mocked(useRoute).mockReturnValue({
-      query: {
-        ghost_member_uuid: '010ef926-f553-4b7a-80df-5e0e2c6aa65d',
-        ghost_member_email: 'john.schwitz@gmail.com',
-        ghost_member_name: 'John G Schwitz',
-      },
-    });
-    vi.mocked(useRouter).mockReturnValue({ push: vi.fn() } as any);
-
-    // Mount the component, providing the mocked router
-    const wrapper = mount(CreateStory, {
-      global: {
-        plugins: [createPinia()],
-      },
-      // This is an advanced technique to ensure the script setup block is processed.
-      props: {},
-      slots: {
-        default: '<div></div>'
-      },
-    });
-
-    // Wait for async operations in onMounted to complete
-    // This two-step process is more robust for complex onMounted hooks:
-    // 1. Wait for the next DOM update cycle, which allows `onMounted` to be called.
-    await nextTick();
-    // 2. Now flush all the promises that were created inside `onMounted`.
+    const wrapper = mount(CreateStory);
     await flushPromises();
 
-    // 5. Assert that the correct logic ran
-    expect(api.authenticateGhostUser).toHaveBeenCalledWith({
-      ghost_user_id: '010ef926-f553-4b7a-80df-5e0e2c6aa65d',
-      name: 'John G Schwitz',
-      email: 'john.schwitz@gmail.com',
-    });
-
-    // Assert that the token was stored in localStorage
-    expect(localStorage.getItem('app_auth_token')).toBe(FAKE_JWT); // This key is defined in api.ts
+    // ASSERT: Should show welcome message with user name
+    expect(wrapper.text()).toContain('Hello Test User!');
+    expect(wrapper.text()).toContain('Let\'s Begin!');
   });
 
-  it('should use existing token from localStorage if available', async () => {
-    // 5. Simulate a user who is already logged in
-    localStorage.setItem('app_auth_token', FAKE_JWT);
+  it('should start a new story when user submits initial prompt', async () => {
+    // ARRANGE: Authenticated user
+    authStore.userId = 'test-user-id';
+    authStore.userName = 'Test User';
+    authStore.authToken = 'fake-jwt-token';
+    localStorage.setItem('app_auth_token', 'fake-jwt-token');
 
-    // Mock an API that requires auth
+    // Mock the startStory API
     vi.mocked(api.startStory).mockResolvedValue({
-        session_id: '123',
-        story: 'It began...',
-        iteration: 1,
-        is_complete: false,
-        next_prompt_for_user: 'What next?'
+      session_id: 'session-123',
+      story: 'Once upon a time in a magical kingdom...',
+      iteration: 1,
+      is_complete: false,
+      next_prompt_for_user: 'What was the name of the kingdom?',
     });
 
-    vi.mocked(useRoute).mockReturnValue({ query: {} });
-    vi.mocked(useRouter).mockReturnValue({ push: vi.fn() } as any);
+    const wrapper = mount(CreateStory);
+    await flushPromises();
 
-    const wrapper = mount(CreateStory, {
-      global: {
-        plugins: [createPinia()],
-      },
+    // ACT: Enter prompt and click start button
+    const textarea = wrapper.find('textarea#story-teller-input');
+    await textarea.setValue('Tell me a story about a magical kingdom');
+
+    const startButton = wrapper.find('[data-testid="start-story-button"]');
+    await startButton.trigger('click');
+    await flushPromises();
+
+    // ASSERT: API was called correctly
+    expect(api.startStory).toHaveBeenCalledWith({
+      initial_prompt: 'Tell me a story about a magical kingdom',
     });
 
-    // Simulate user action that calls an authenticated endpoint
-    // (e.g., filling out a form and clicking a button)
-    // await wrapper.find('textarea').setValue('A new story');
-    // await wrapper.find('button').trigger('click');
+    // Story content should be displayed
+    expect(wrapper.text()).toContain('Once upon a time in a magical kingdom...');
 
-    // Assert that the auth function was NOT called again
-    expect(api.authenticateGhostUser).not.toHaveBeenCalled();
+    // Next prompt suggestion should be shown
+    expect(wrapper.text()).toContain('What was the name of the kingdom?');
+  });
 
-    // If you triggered an action, you could assert that the API call was made
-    // expect(api.startStory).toHaveBeenCalled();
+  it('should continue story when user provides feedback', async () => {
+    // ARRANGE: Authenticated user with existing session
+    authStore.userId = 'test-user-id';
+    authStore.userName = 'Test User';
+    authStore.authToken = 'fake-jwt-token';
+    localStorage.setItem('app_auth_token', 'fake-jwt-token');
+
+    // Mock startStory for initial story
+    vi.mocked(api.startStory).mockResolvedValue({
+      session_id: 'session-123',
+      story: 'Once upon a time...',
+      iteration: 1,
+      is_complete: false,
+      next_prompt_for_user: 'What happens next?',
+    });
+
+    // Mock continueStory for continuation
+    vi.mocked(api.continueStory).mockResolvedValue({
+      session_id: 'session-123',
+      story: 'The brave knight drew his sword...',
+      iteration: 2,
+      is_complete: false,
+      next_prompt_for_user: 'Who was the knight fighting?',
+    });
+
+    const wrapper = mount(CreateStory);
+    await flushPromises();
+
+    // Start initial story
+    await wrapper.find('textarea#story-teller-input').setValue('Tell me a story');
+    await wrapper.find('[data-testid="start-story-button"]').trigger('click');
+    await flushPromises();
+
+    // ACT: Continue the story
+    await wrapper.find('textarea#story-teller-input').setValue('A knight appeared');
+    await wrapper.find('[data-testid="continue-story-button"]').trigger('click');
+    await flushPromises();
+
+    // ASSERT: continueStory API was called
+    expect(api.continueStory).toHaveBeenCalledWith({
+      session_id: 'session-123',
+      feedback: 'A knight appeared',
+    });
+
+    // Both story parts should be visible
+    expect(wrapper.text()).toContain('Once upon a time...');
+    expect(wrapper.text()).toContain('The brave knight drew his sword...');
+  });
+
+  it('should complete story and enable save options', async () => {
+    // ARRANGE: Authenticated user with existing session
+    authStore.userId = 'test-user-id';
+    authStore.userName = 'Test User';
+    authStore.authToken = 'fake-jwt-token';
+    localStorage.setItem('app_auth_token', 'fake-jwt-token');
+
+    // Mock startStory
+    vi.mocked(api.startStory).mockResolvedValue({
+      session_id: 'session-123',
+      story: 'Once upon a time...',
+      iteration: 1,
+      is_complete: false,
+      next_prompt_for_user: 'Continue?',
+    });
+
+    // Mock completeStory
+    vi.mocked(api.completeStory).mockResolvedValue({
+      session_id: 'session-123',
+      full_story: 'Once upon a time... And they lived happily ever after. The End.',
+      iteration: 2,
+      is_complete: true,
+    });
+
+    const wrapper = mount(CreateStory);
+    await flushPromises();
+
+    // Start story
+    await wrapper.find('textarea#story-teller-input').setValue('Tell me a story');
+    await wrapper.find('[data-testid="start-story-button"]').trigger('click');
+    await flushPromises();
+
+    // ACT: Complete the story
+    await wrapper.find('[data-testid="complete-story-button"]').trigger('click');
+    await flushPromises();
+
+    // ASSERT: completeStory API was called
+    expect(api.completeStory).toHaveBeenCalledWith({
+      session_id: 'session-123',
+    });
+
+    // Completion message should be shown
+    expect(wrapper.text()).toContain('Story Complete');
+
+    // Save section should be visible
+    expect(wrapper.text()).toContain('Save Your Masterpiece');
+    expect(wrapper.find('input#storyNameInput').exists()).toBe(true);
+  });
+
+  it('should display error message when story generation fails', async () => {
+    // ARRANGE: Authenticated user
+    authStore.userId = 'test-user-id';
+    authStore.userName = 'Test User';
+    authStore.authToken = 'fake-jwt-token';
+    localStorage.setItem('app_auth_token', 'fake-jwt-token');
+
+    // Mock API to reject with error
+    const apiError = new Error('Network connection failed');
+    vi.mocked(api.startStory).mockRejectedValue(apiError);
+
+    const wrapper = mount(CreateStory);
+    await flushPromises();
+
+    // ACT: Try to start story
+    await wrapper.find('textarea#story-teller-input').setValue('Tell me a story');
+    await wrapper.find('[data-testid="start-story-button"]').trigger('click');
+    await flushPromises();
+
+    // ASSERT: Error message is displayed
+    expect(wrapper.text()).toContain('Story Generation Error');
+    expect(wrapper.text()).toContain('Network connection failed');
   });
 });

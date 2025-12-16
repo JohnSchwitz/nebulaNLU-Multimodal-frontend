@@ -1,9 +1,14 @@
-import { afterEach, vi } from 'vitest';
+import { config } from '@vue/test-utils'
+import { vi } from 'vitest'
 
-// This automatically mocks the entire api service for every test file.
-vi.mock('@/services/api');
+// Mock router-link globally for all tests
+config.global.stubs = {
+  'router-link': {
+    template: '<a><slot /></a>'
+  }
+}
 
-// This ensures that our mocks are reset between each test.
+// Auto-restore all mocks after each test
 afterEach(() => {
-  vi.clearAllMocks();
-});
+  vi.restoreAllMocks()
+})
