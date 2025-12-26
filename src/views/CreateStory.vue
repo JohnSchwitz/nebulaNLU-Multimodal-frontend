@@ -4,6 +4,10 @@ import { useAuthStore } from '@/stores/auth';
 import { storeToRefs } from 'pinia';
 import api from '@/services/api';
 
+// COMPONENTS
+import SurveyModal from '@/components/SurveyModal.vue';
+import SurveyBanner from '@/components/SurveyBanner.vue';
+
 // PINIA STORE
 const authStore = useAuthStore();
 const {
@@ -14,7 +18,7 @@ const {
   error: authError
 } = storeToRefs(authStore);
 
-// STATE
+// STORY STATE
 const storyTellerInput = ref('');
 const storyContent = ref('');
 const storyName = ref('');
@@ -31,6 +35,15 @@ const generationError = ref<string | null>(null);
 const uploadError = ref<string | null>(null);
 const uploadSuccessMessage = ref<string | null>(null);
 const storyNameTouched = ref(false);
+
+// V3: ACCOUNT & SURVEY STATE
+const accountInfo = ref<{ story_count: number; story_limit: number; stories_remaining: number; can_create_story: boolean; subscription_type: string; } | null>(null);
+const accountLoading = ref(false);
+const accountError = ref<string | null>(null);
+
+const showSurvey = ref(false);
+const showBanner = ref(false); // The "Snake" banner
+const completedStoriesForSurvey = ref<number>(0);
 
 // VALIDATION
 const MIN_PROMPT_LENGTH = 10;
@@ -66,7 +79,27 @@ const formatSuggestion = (suggestion: string): string => {
     .join('');
 };
 
-// GENERATE STORY
+// --- API ACTIONS ---
+
+// FETCH ACCOUNT INFO (Restored)
+const fetchAccountInfo = async () => {
+  if (!isAuthenticated.value) return;
+  console.log("CreateStory: Fetching account info...");
+  accountLoading.value = true;
+  accountError.value = null;
+  try {
+    const data = await api.getAccountInfo();
+    accountInfo.value = data;
+    console.log("CreateStory: Account info loaded:", data);
+  } catch (error: any) {
+    console.error("CreateStory: Failed to load account info", error);
+    accountError.value = error.message || 'Could not load your story credits.';
+  } finally {
+    accountLoading.value = false;
+  }
+};
+
+// 1. GENERATE
 const generateStory = async () => {
   const cleanedInput = storyTellerInput.value.trim();
   if (!cleanedInput || !isAuthenticated.value) return;
@@ -84,7 +117,6 @@ const generateStory = async () => {
         feedback: cleanedInput,
       });
 
-      // APPEND to existing story
       if (response.next_prompt_for_user) {
         storyContent.value = storyContent.value + `\n\n${response.story}`;
         aiSuggestionForNextTurn.value = response.next_prompt_for_user;
@@ -98,7 +130,6 @@ const generateStory = async () => {
       console.log('🆕 Starting story');
       response = await api.startStory({ initial_prompt: cleanedInput });
 
-      // SET story first time
       sessionId.value = response.session_id;
 
       if (response.next_prompt_for_user) {
@@ -109,11 +140,17 @@ const generateStory = async () => {
         storyContent.value = story;
         aiSuggestionForNextTurn.value = prompt;
       }
+
+      // Update local credits immediately (optimistic UI)
+      if (accountInfo.value) {
+        accountInfo.value.stories_remaining--;
+        accountInfo.value.story_count++;
+      }
     }
 
     currentIteration.value = response.iteration || currentIteration.value + 1;
     storyTellerInput.value = '';
-    console.log('✅ Story generated -', storyContent.value.length, 'chars');
+    console.log('✅ Story generated');
 
   } catch (error: any) {
     console.error('❌ Error:', error);
@@ -123,7 +160,7 @@ const generateStory = async () => {
   }
 };
 
-// COMPLETE STORY
+// 2. COMPLETE
 const completeStory = async () => {
   if (!sessionId.value || !isAuthenticated.value) return;
 
@@ -133,17 +170,10 @@ const completeStory = async () => {
 
   try {
     console.log('🏁 Completing story');
-    console.log('📊 BEFORE completion - storyContent length:', storyContent.value.length);
-
     const response = await api.completeStory({ session_id: sessionId.value });
 
-    console.log('📊 Backend response.full_story length:', response.full_story?.length || 0);
-
-    // Backend returns COMPLETE story
     let finalStory = response.full_story || storyContent.value;
-
-    // Remove ALL occurrences of NEXT_PROMPT and everything after each one
-    // Split by NEXT_PROMPT, keep only story parts, rejoin
+    // Clean up NEXT_PROMPT artifacts
     const storyParts = finalStory.split(/NEXT_PROMPT:[^\n]*(\n\n|$)/gi);
     finalStory = storyParts.join('\n\n').trim();
 
@@ -151,8 +181,20 @@ const completeStory = async () => {
     isCompleted.value = true;
     currentIteration.value = response.iteration;
 
-    console.log('📊 AFTER completion - storyContent length:', storyContent.value.length);
-    console.log('✅ Story completed');
+    // Refresh account info to sync real server count
+    await fetchAccountInfo();
+
+    // V3 SURVEY CHECK
+    try {
+      if (accountInfo.value) {
+        const status = await api.getSurveyStatus(accountInfo.value.story_count);
+        if (status.should_show_survey) {
+          completedStoriesForSurvey.value = status.completed_stories_count;
+          showSurvey.value = true; // Trigger Modal
+          showBanner.value = false;
+        }
+      }
+    } catch (e) { console.error("⚠️ Failed to check survey status:", e); }
 
   } catch (error: any) {
     console.error('❌ Error:', error);
@@ -163,7 +205,7 @@ const completeStory = async () => {
   }
 };
 
-// SAVE STORY
+// 3. SAVE
 const uploadToDatabase = async () => {
   if (!isStoryNameValid.value || !storyContent.value || !isAuthenticated.value) return;
 
@@ -172,33 +214,27 @@ const uploadToDatabase = async () => {
   uploadSuccessMessage.value = null;
 
   try {
-    console.log('💾 Saving story:', storyName.value);
     const response = await api.saveStory({
       story_name: storyName.value,
       story_content: storyContent.value,
       session_id: sessionId.value,
     });
     uploadSuccessMessage.value = response.message;
-    console.log('✅ Saved');
   } catch (error: any) {
-    console.error('❌ Error:', error);
     uploadError.value = error.message || 'Save failed';
   } finally {
     uploadLoading.value = false;
   }
 };
 
-// DOWNLOAD PDF
+// 4. PDF
 const downloadAsPDF = async () => {
   if (!isStoryNameValid.value || !storyContent.value) return;
-
   try {
-    console.log('📄 Generating PDF');
     const blob = await api.generateStoryPDF({
       story_name: storyName.value,
       story_content: storyContent.value,
     });
-
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -207,255 +243,263 @@ const downloadAsPDF = async () => {
     a.click();
     window.URL.revokeObjectURL(url);
     a.remove();
-    console.log('✅ PDF downloaded');
   } catch (error: any) {
-    console.error('❌ Error:', error);
     uploadError.value = `PDF failed: ${error.message}`;
   }
 };
 
-// LIFECYCLE
+// --- SURVEY HANDLERS ---
+
+const handleSurveyClose = () => {
+  showSurvey.value = false;
+  // If they close without submitting, show the sticky banner
+  showBanner.value = true;
+};
+
+const handleSurveySubmitted = () => {
+  showSurvey.value = false;
+  showBanner.value = false; // Permanently hide banner for this session
+  fetchAccountInfo(); // Refresh account to maybe update flags?
+};
+
+const openSurveyFromBanner = () => {
+  showBanner.value = false;
+  showSurvey.value = true;
+};
+
+// --- LIFECYCLE ---
+
 onMounted(async () => {
-  console.log('[CreateStory] Mounted');
   if (isAuthenticated.value) {
+    // Force fetch on mount
+    await fetchAccountInfo();
     try {
       const uiTexts = await api.getUiTexts();
       initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
-      console.log('✅ UI texts loaded');
     } catch (error) {
-      console.error('❌ Failed:', error);
-      initialGuidanceFromAPI.value = "Welcome {{name}}! Start your story.";
+      initialGuidanceFromAPI.value = "Welcome {{name}}! Let's start an adventure.";
     }
   }
 });
 
 watch(isAuthenticated, async (newAuth, oldAuth) => {
   if (newAuth === true && oldAuth === false) {
+    // Fetch on login
+    await fetchAccountInfo();
     try {
       const uiTexts = await api.getUiTexts();
       initialGuidanceFromAPI.value = uiTexts.initialStoryGuidance;
-      console.log('✅ UI texts loaded');
     } catch (error) {
-      console.error('❌ Failed:', error);
-      initialGuidanceFromAPI.value = "Welcome {{name}}! Start your story.";
+      initialGuidanceFromAPI.value = "Welcome {{name}}! Let's start an adventure.";
     }
   }
-});
-
-watch(authUserName, (newName) => {
-  console.log('User name:', newName);
 });
 </script>
 
 <template>
-  <div class="create-story-page max-w-4xl mx-auto p-4 md:p-6 font-didot">
+  <div class="create-story-page max-w-4xl mx-auto p-4 md:p-6 font-didot mb-16">
 
-    <!-- ========================================= -->
-    <!-- AUTHENTICATION STATUS DISPLAY             -->
-    <!-- ========================================= -->
+    <!-- SURVEY COMPONENTS -->
+    <SurveyModal
+      :show="showSurvey"
+      :completed-stories="completedStoriesForSurvey"
+      @close="handleSurveyClose"
+      @survey-submitted="handleSurveySubmitted"
+    />
 
-    <!-- Loading state -->
+    <SurveyBanner
+      :show="showBanner"
+      @click="openSurveyFromBanner"
+    />
+
+    <!-- AUTH LOADING -->
     <div v-if="authIsLoading" class="text-center py-4 text-gray-600">
-      Authenticating user, please wait...
+      Authenticating user...
     </div>
 
-    <!-- Main content (only when not loading) -->
+    <!-- MAIN CONTENT -->
     <div v-else>
 
-      <!-- Authentication error -->
-      <div v-if="authError" class="my-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-        <span class="block sm:inline">
-          <strong class="font-bold">Authentication Error:</strong> {{ authError }}. Please try logging in again.
-        </span>
+      <!-- AUTH ERROR -->
+      <div v-if="authError" class="my-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+        <strong class="font-bold">Authentication Error:</strong> {{ authError }}. Please try logging in again.
+      </div>
+      <div v-else-if="!isAuthenticated" class="my-4 bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative">
+        Please log in via Ghost to create and save stories.
       </div>
 
-      <!-- Not authenticated prompt -->
-      <div v-else-if="!isAuthenticated" class="my-4 bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative" role="alert">
-        <span class="block sm:inline">
-          Please log in via Ghost to create and save stories.
-        </span>
-      </div>
-
-      <!-- ========================================= -->
-      <!-- MAIN STORY CREATION AREA                  -->
-      <!-- (Only shown when authenticated)           -->
-      <!-- ========================================= -->
       <div v-if="isAuthenticated" class="story-creation-area mt-6">
 
-        <!-- INSTRUCTION BOX (Orange Box) -->
-        <div class="instruction-box my-4 p-4 rounded-md shadow-md" style="background-color: #FFE086; color: black;" role="status">
+        <!-- ACCOUNT / LIMITS DISPLAY (Restored) -->
+        <div v-if="accountLoading" class="text-center text-gray-500 text-sm mb-2">Loading credits...</div>
 
-          <!-- Greeting -->
-          <p class="instruction-box-greeting mb-2">
+        <div v-if="accountInfo && !accountInfo.can_create_story" class="my-4 bg-yellow-50 border-l-4 border-yellow-500 text-yellow-800 p-4 rounded shadow-sm">
+          <p class="font-bold text-lg">Story Limit Reached</p>
+          <p>You have used all {{ accountInfo.story_limit }} of your available stories. Please upgrade to continue.</p>
+        </div>
+
+        <div v-else-if="accountInfo" class="flex justify-end mb-2">
+          <span class="inline-flex items-center px-4 py-1.5 rounded-full text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 shadow-sm">
+            Stories Remaining: <strong class="ml-1">{{ accountInfo.stories_remaining }} / {{ accountInfo.story_limit }}</strong>
+          </span>
+        </div>
+
+        <!-- INSTRUCTION BOX (Orange) -->
+        <div class="instruction-box my-4 p-5 rounded-lg shadow-md border border-orange-200" style="background-color: #FFE086; color: #1a1a1a;">
+          <p class="instruction-box-greeting mb-2 font-bold text-lg">
             Hello {{ authUserName || 'Storyteller' }}!
-            <span v-if="!sessionId && currentIteration === 0">
-              Let's Begin! (Ready for Turn 1)
+            <span v-if="!sessionId && currentIteration === 0" class="font-normal text-base block sm:inline opacity-90">
+              - Let's Begin!
             </span>
-            <span v-else-if="sessionId && !isCompleted && currentIteration > 0">
-              Your turn to provide input for Story Turn {{ currentIteration + 1 }}. (AI completed Turn {{ currentIteration }})
-            </span>
-            <span v-else-if="isCompleted && currentIteration > 0">
-              Story Complete ({{ currentIteration }} turns total).
+            <span v-else-if="sessionId && !isCompleted" class="font-normal text-base block sm:inline opacity-90">
+              - Turn {{ currentIteration + 1 }}
             </span>
           </p>
 
-          <!-- Guidance text -->
           <div v-if="!sessionId && currentIteration === 0" class="instruction-box-text">
             <p v-if="initialGuidanceFromAPI" v-html="processedGuidance.replace(/\n/g, '<br>')"></p>
             <p v-else>Enter your initial story idea to start our adventure!</p>
           </div>
 
-          <!-- Enhanced (formats multi-paragraph suggestions) -->
           <div v-else-if="!isCompleted" class="instruction-box-text">
-            <div v-if="aiSuggestionForNextTurn" class="ai-suggestion">
-              <p class="font-semibold mb-2">💡 Ideas for Your Next Turn:</p>
-              <div class="suggestion-content" v-html="formatSuggestion(aiSuggestionForNextTurn)"></div>
+            <div v-if="aiSuggestionForNextTurn" class="bg-white/40 p-3 rounded mt-2 border-l-4 border-blue-500">
+              <p class="font-bold text-sm text-blue-900 mb-1">💡 AI Suggestion:</p>
+              <div v-html="formatSuggestion(aiSuggestionForNextTurn)"></div>
             </div>
-            <p v-else>
-              What happens next? Add to the story or suggest a new direction!
+            <p v-else class="mt-2">What happens next? Add to the story or suggest a new direction!</p>
+          </div>
+
+          <div v-else class="instruction-box-text font-medium text-green-900">
+            <p>Your story is complete! See below to save, download, or illustrate it.</p>
+          </div>
+        </div>
+
+        <!-- LOADING SPINNER -->
+        <div v-if="loading || uploadLoading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div class="bg-white p-6 rounded-lg shadow-xl flex flex-col items-center">
+            <div class="spinner mb-4"></div>
+            <p class="text-gray-800 font-medium text-lg">
+              {{ loading && !isCompletingStory ? 'Writing Story...' :
+                 loading && isCompletingStory ? 'Writing Conclusion...' :
+                 uploadLoading ? 'Saving to Cloud...' : 'Processing...' }}
             </p>
           </div>
-
-          <div v-else class="instruction-box-text">
-            <p class="font-semibold">Your story, "{{ storyName || 'Untitled Story' }}", is complete!</p>
-            <p>You can now save it to your collection or download it as a PDF.</p>
-          </div>
-        </div>
-        <!-- End Instruction Box -->
-
-        <!-- Loading spinner -->
-        <div v-if="loading || uploadLoading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div class="spinner"></div>
-          <p class="text-white ml-3 text-lg">
-            {{ loading && !isCompletingStory ? 'Generating Story...' :
-               loading && isCompletingStory ? 'Finalizing Story...' :
-               uploadLoading ? 'Saving...' : 'Processing...' }}
-          </p>
         </div>
 
-        <!-- Error/Success Messages -->
-        <div v-if="generationError" class="my-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
-          <p class="font-bold">Story Generation Error</p>
+        <!-- GENERATION ERROR -->
+        <div v-if="generationError" class="my-4 bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-sm">
+          <h3 class="font-bold">Generation Error</h3>
           <p>{{ generationError }}</p>
+          <p class="text-sm mt-1 opacity-75">Please try rephrasing your request.</p>
         </div>
 
-        <div v-if="uploadError" class="my-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
-          <p class="font-bold">Save Error</p>
-          <p>{{ uploadError }}</p>
-        </div>
-
-        <div v-if="uploadSuccessMessage" class="my-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4" role="alert">
-          <p class="font-bold">Success</p>
-          <p>{{ uploadSuccessMessage }}</p>
-        </div>
-
-        <!-- Page Title -->
-        <h1 class="text-3xl md:text-4xl font-bold text-center mb-6 text-gray-800">
+        <!-- HEADER -->
+        <h1 class="text-3xl md:text-4xl font-bold text-center mb-6 text-gray-800 tracking-tight">
           {{ sessionId ? 'Continue Your Story' : 'Start a New Story' }}
         </h1>
 
-        <!-- Story Display -->
-        <div v-if="storyContent" class="story-display-container bg-white p-4 md:p-6 rounded shadow-md mb-6 border border-gray-200 min-h-[200px]">
-          <h3 class="text-xl font-semibold mb-3 text-gray-700 border-b pb-2">Current Story Progress:</h3>
-          <div class="story-content-text whitespace-pre-wrap">{{ storyContent }}</div>
-          <p v-if="isCompleted && storyContent" class="mt-4 text-green-600 font-semibold">
-            This story is now complete! You can save it or download it as a PDF below.
-          </p>
+        <!-- STORY CONTENT DISPLAY -->
+        <div v-if="storyContent" class="bg-white p-6 md:p-8 rounded-lg shadow-lg mb-6 border border-gray-100 min-h-[200px]">
+          <h3 class="text-lg font-semibold mb-4 text-gray-400 border-b pb-2 uppercase tracking-wide text-xs">Story Progress</h3>
+          <div class="story-content-text whitespace-pre-wrap leading-relaxed text-gray-800 text-lg">{{ storyContent }}</div>
+
+          <div v-if="isCompleted" class="mt-8 p-4 bg-green-50 text-green-800 rounded border border-green-200 text-center font-medium">
+            ✨ The End
+          </div>
         </div>
 
-        <!-- User Input Area (only if story not completed) -->
-        <div v-if="!isCompleted" class="mb-4">
-          <label for="story-teller-input" class="user-input-label block mb-2">
+        <!-- USER INPUT (If active) -->
+        <div v-if="!isCompleted" class="mb-8">
+          <label for="story-teller-input" class="block text-xl font-medium text-gray-700 mb-3 font-georgia">
             {{ sessionId ?
-               (aiSuggestionForNextTurn ? 'Respond to AI or add your own idea:' :
-                'Your turn! What happens next, or how should we change the story?') :
-               'Enter your initial story idea to begin:' }}
+               (aiSuggestionForNextTurn ? 'How should the story continue?' : 'What happens next?') :
+               'Once upon a time...' }}
           </label>
           <textarea
             id="story-teller-input"
             v-model="storyTellerInput"
             :placeholder="aiSuggestionForNextTurn || currentPlaceholder"
-            rows="5"
-            class="user-input-textarea w-full border rounded px-3 py-2"
-            :class="{ 'border-red-500': storyTellerInput.length > 0 && !isPromptValid }"
+            rows="4"
+            class="w-full border border-gray-300 rounded-lg p-4 text-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-serif"
+            :class="{ 'border-red-300 bg-red-50': storyTellerInput.length > 0 && !isPromptValid }"
           ></textarea>
-          <p v-if="storyTellerInput.length > 0 && !isPromptValid" class="text-red-600 text-sm mt-1">
-            Please enter at least {{ MIN_PROMPT_LENGTH }} characters.
-          </p>
+          <div class="flex justify-between mt-2">
+            <p v-if="storyTellerInput.length > 0 && !isPromptValid" class="text-red-600 text-sm">
+              Keep typing... ({{ storyTellerInput.length }}/{{ MIN_PROMPT_LENGTH }} chars)
+            </p>
+            <p v-else class="text-gray-400 text-xs ml-auto">
+              {{ storyTellerInput.length }} chars
+            </p>
+          </div>
         </div>
 
-        <!-- Action Buttons: Start/Continue/Complete -->
-        <div v-if="!isCompleted" class="flex flex-wrap justify-center items-center gap-4 mb-6">
+        <!-- ACTION BUTTONS -->
+        <div v-if="!isCompleted" class="flex flex-col sm:flex-row justify-center gap-4 mb-12">
           <button
             @click="generateStory"
-            :disabled="!isPromptValid || loading || !isAuthenticated"
-            class="action-button primary-button px-6 py-3 rounded-lg font-semibold transition-colors"
-            :title="!isAuthenticated ? 'Please log in first' :
-                   (!isPromptValid ? `Please enter at least ${MIN_PROMPT_LENGTH} characters` :
-                   (sessionId ? 'Continue with your input' : 'Start a new story with your idea'))"
-            :data-testid="sessionId ? 'continue-story-button' : 'start-story-button'"
+            :disabled="!isPromptValid || loading || !isAuthenticated || (accountInfo && !accountInfo.can_create_story)"
+            class="px-8 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-xl font-bold text-lg shadow-md transition-all transform hover:-translate-y-0.5"
           >
-            {{ (loading && !isCompletingStory) ? 'Generating...' : (sessionId ? 'Continue Story' : 'Start Story') }}
+            {{ (loading && !isCompletingStory) ? 'Writing...' : (sessionId ? 'Continue Story' : 'Start Adventure') }}
           </button>
 
           <button
             v-if="sessionId && !isCompleted"
             @click="completeStory"
             :disabled="loading || !isAuthenticated"
-            class="action-button secondary-button px-6 py-3 rounded-lg font-semibold transition-colors"
-            title="Ask the AI to write a final conclusion for the story"
-            data-testid="complete-story-button"
+            class="px-8 py-4 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 text-white rounded-xl font-bold text-lg shadow-md transition-all"
           >
-            {{ (loading && isCompletingStory) ? 'Finalizing...' : 'Complete Story' }}
+            {{ (loading && isCompletingStory) ? 'Finishing...' : 'Finish Story' }}
           </button>
         </div>
 
-        <!-- Save Section (only if story completed) -->
-        <div v-if="isCompleted" class="save-story-section mt-8 p-4 md:p-6 border-t border-gray-300 bg-gray-50 rounded-md">
-          <h3 class="text-xl font-semibold mb-4 text-gray-700">Save Your Masterpiece</h3>
+        <!-- COMPLETION AREA (Save, PDF, Image) -->
+        <div v-if="isCompleted" class="animate-fade-in space-y-8">
 
-          <div class="mb-4">
-            <label for="storyNameInput" class="block text-sm font-medium text-gray-800 mb-1">Story Name:</label>
-            <input
-              type="text"
-              id="storyNameInput"
-              v-model="storyName"
-              required
-              @blur="storyNameTouched = true"
-              class="shadow-sm focus:ring-green-500 focus:border-green-500 block w-full sm:text-sm border-gray-300 rounded-md p-2 font-sans"
-              placeholder="Enter a name for your story"
-              aria-required="true"
-            />
-            <p v-if="showNameError" class="text-red-600 text-sm mt-1">Please enter a name for your story.</p>
+          <!-- 1. SAVE & PDF -->
+          <div class="bg-gray-50 p-6 md:p-8 rounded-xl border border-gray-200">
+            <h3 class="text-2xl font-bold text-gray-800 mb-6">Save Your Masterpiece</h3>
+
+            <div class="mb-6">
+              <label for="storyNameInput" class="block text-sm font-medium text-gray-700 mb-2">Story Title</label>
+              <input
+                type="text"
+                id="storyNameInput"
+                v-model="storyName"
+                @blur="storyNameTouched = true"
+                class="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-green-500 focus:border-green-500"
+                placeholder="e.g., The Magical Forest Adventure"
+              />
+              <p v-if="showNameError" class="text-red-600 text-sm mt-1">Please give your story a title.</p>
+            </div>
+
+            <!-- MESSAGES -->
+            <div v-if="uploadError" class="mb-4 bg-red-100 text-red-700 p-3 rounded">Error: {{ uploadError }}</div>
+            <div v-if="uploadSuccessMessage" class="mb-4 bg-green-100 text-green-700 p-3 rounded">✅ {{ uploadSuccessMessage }}</div>
+
+            <div class="flex flex-wrap gap-4">
+              <button
+                @click="uploadToDatabase"
+                :disabled="!isStoryNameValid || uploadLoading || !isAuthenticated"
+                class="flex-1 min-w-[200px] px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold rounded-lg shadow transition-colors"
+              >
+                {{ uploadLoading ? 'Saving...' : 'Save to Library' }}
+              </button>
+
+              <button
+                @click="downloadAsPDF"
+                :disabled="!isStoryNameValid"
+                class="flex-1 min-w-[200px] px-6 py-3 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold rounded-lg shadow-sm transition-colors"
+              >
+                Download PDF
+              </button>
+            </div>
+            <div class="mt-4 text-center">
+              <router-link to="/download" class="text-blue-600 hover:underline text-sm">View all my stories</router-link>
+            </div>
           </div>
 
-          <div class="flex flex-wrap gap-4">
-            <button
-              @click="uploadToDatabase"
-              :disabled="!isStoryNameValid || uploadLoading || !isAuthenticated || !storyContent"
-              class="action-button bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
-              title="Save this story to your account"
-            >
-              {{ uploadLoading ? 'Saving...' : 'Save Story to Database' }}
-            </button>
-
-            <button
-              @click="downloadAsPDF"
-              :disabled="!isStoryNameValid || !storyContent"
-              class="action-button bg-gray-200 hover:bg-gray-300 text-gray-700 px-6 py-3 rounded-lg font-semibold transition-colors"
-              title="Download your story as a PDF file"
-            >
-              Download as PDF
-            </button>
-          </div>
-
-          <div class="mt-4 text-center">
-            <router-link to="/download" class="text-indigo-600 hover:text-indigo-800 hover:underline">
-              View My Saved Stories
-            </router-link>
-          </div>
         </div>
-
       </div>
     </div>
   </div>
@@ -469,111 +513,28 @@ watch(authUserName, (newName) => {
   font-style: normal;
 }
 
-.create-story-page {
-  font-family: 'Didot', 'Bodoni MT', 'Hoefler Text', Garamond, 'Times New Roman', serif;
-}
+.font-didot { font-family: 'Didot', 'Bodoni MT', serif; }
+.font-georgia { font-family: 'Georgia', serif; }
 
-.instruction-box {
-  font-family: 'Georgia', serif;
-  font-size: 1.3rem;
-  line-height: 1.4;
-}
-
-.story-content-text {
-  font-family: 'Didot', 'Georgia', 'Times New Roman', Times, serif;
-  font-size: 1.5rem;
-  line-height: 1.7;
-  color: #111827;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  text-align: left;
-}
-
-.user-input-label {
-  font-family: 'Georgia', serif;
-  font-size: 1.6rem;
-  line-height: 1.7;
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.user-input-textarea {
-  font-family: 'Didot', 'Times New Roman', serif;
-  font-size: 1.4rem;
-  line-height: 1.6;
-  color: #111827;
-}
-
-.primary-button {
-  background-color: #4a6fa5;
-  color: white;
-}
-
-.primary-button:hover:not(:disabled) {
-  background-color: #3a5a8c;
-}
-
-.primary-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.secondary-button {
-  background-color: #6c757d;
-  color: white;
-}
-
-.secondary-button:hover:not(:disabled) {
-  background-color: #5a6268;
-}
-
-.secondary-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.instruction-box { font-family: 'Georgia', serif; line-height: 1.5; }
 
 .spinner {
-  border: 4px solid rgba(255, 255, 255, 0.3);
-  border-top: 4px solid white;
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  border-top: 4px solid #3b82f6;
   border-radius: 50%;
   width: 40px;
   height: 40px;
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+.animate-fade-in {
+  animation: fadeIn 0.8s ease-out forwards;
 }
 
-.ai-suggestion {
-  background: rgba(255, 255, 255, 0.3);
-  padding: 1rem;
-  border-radius: 0.5rem;
-  border-left: 4px solid #4a6fa5;
-}
-
-.suggestion-content {
-  font-size: 1.1rem;
-  line-height: 1.6;
-}
-
-.suggestion-content p {
-  margin-bottom: 0.75rem;
-}
-
-.suggestion-content p:last-child {
-  margin-bottom: 0;
-}
-
-.greeting-text {
-  font-size: 1.1rem;
-  margin-bottom: 1rem;
-  color: #2c3e50;
-}
-
-.greeting-text strong {
-  color: #4a6fa5;
-  font-weight: 600;
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 </style>

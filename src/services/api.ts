@@ -3,7 +3,38 @@ import { useAuthStore } from '@/stores/auth'
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
-console.log(`✅ API configured for: ${API_URL}`);
+// --- Type Definitions ---
+
+export interface AccountInfo {
+  user_id: string;
+  story_count: number;
+  story_limit: number;
+  stories_remaining: number;
+  subscription_type: string;
+  can_create_story: boolean;
+}
+
+export interface SurveyStatusResponse {
+  has_submitted: boolean;
+  should_show_survey: boolean;
+  completed_stories_count: number;
+  last_submitted_at?: string | null;
+}
+
+export interface SurveySubmitRequest {
+  liked_features: string;
+  improvements: string;
+  pricing_10_stories: string;
+  pricing_monthly: string;
+  pricing_annual: string;
+  feature_parent_dashboard: string;
+  feature_child_progress: string;
+  feature_story_library: string;
+  feature_julia_engine: string;
+  feature_family_values: string;
+}
+
+// --- Internal Fetch Wrapper ---
 
 /**
  * Enhanced fetch with timeout, retry, and better error handling
@@ -20,12 +51,7 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<any> {
   // Add JWT token if available
   if (authStore.authToken) {
     headers['Authorization'] = `Bearer ${authStore.authToken}`
-    console.log('🔑 JWT token added to request')
-  } else {
-    console.log('[API Interceptor] No auth token found for this request.')
   }
-
-  console.log(`[API] Request to: ${url}`)
 
   // Create abort controller for timeout
   const controller = new AbortController()
@@ -35,14 +61,12 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<any> {
     const response = await fetch(url, {
       ...options,
       headers,
-      credentials: 'omit', // CHANGED: Don't send cookies (we use JWT)
+      credentials: 'omit', // JWT is in header, no cookies needed
       signal: controller.signal,
-      mode: 'cors', // Explicitly set CORS mode
+      mode: 'cors',
     })
 
     clearTimeout(timeoutId)
-
-    console.log(`[API] Response status: ${response.status}`)
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({
@@ -58,9 +82,7 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<any> {
       throw new Error(errorMessage)
     }
 
-    const data = await response.json()
-    console.log('[API] Response received successfully')
-    return data
+    return await response.json()
 
   } catch (error: any) {
     clearTimeout(timeoutId)
@@ -76,13 +98,12 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<any> {
 }
 
 export default {
-  // Authentication
+  // --- Authentication ---
   async authenticateGhostUser(data: {
     ghost_user_id: string;
     name?: string;
     email?: string;
   }) {
-    console.log('[API] Authenticating Ghost user:', data.ghost_user_id);
     return apiFetch(`${API_URL}/api/auth/ghost-token`, {
       method: 'POST',
       body: JSON.stringify(data)
@@ -95,7 +116,7 @@ export default {
     });
   },
 
-  // Story operations
+  // --- Story Operations ---
   async startStory(data: { initial_prompt: string }) {
     return apiFetch(`${API_URL}/api/story/start`, {
       method: 'POST',
@@ -140,9 +161,9 @@ export default {
     });
   },
 
+  // --- PDF Generation ---
   async generateStoryPDF(data: { story_name: string; story_content: string }): Promise<Blob> {
     const authStore = useAuthStore()
-
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     }
@@ -165,68 +186,84 @@ export default {
     return response.blob();
   },
 
-  // UI configuration
+  // --- UI Configuration ---
   async getUiTexts() {
-    console.log('[API] Fetching UI texts');
     return apiFetch(`${API_URL}/api/ui/texts`, {
       method: 'GET'
     });
   },
 
-  // Image generation
-async generateImageFromStory(data: { story: string; prompt?: string }): Promise<Blob> {
-  const authStore = useAuthStore()
+  // --- V3: Account & Survey Methods (NEW) ---
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  }
-
-  if (authStore.authToken) {
-    headers['Authorization'] = `Bearer ${authStore.authToken}`
-  }
-
-  console.log('[API] Generating image from story');
-
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout for image generation
-
-  try {
-    const response = await fetch(`${API_URL}/api/image/generate-from-story`, {
-      method: 'POST',
-      credentials: 'omit',
-      headers,
-      body: JSON.stringify(data),
-      signal: controller.signal,
-      mode: 'cors',
+  async getAccountInfo(): Promise<AccountInfo> {
+    return apiFetch(`${API_URL}/api/auth/account`, {
+      method: 'GET'
     });
+  },
 
-    clearTimeout(timeoutId)
+  async getSurveyStatus(completed_stories: number): Promise<SurveyStatusResponse> {
+    console.log(`[API] Checking survey status for ${completed_stories} completed stories`);
+    return apiFetch(`${API_URL}/api/survey/status?completed_stories=${completed_stories}`, {
+      method: 'GET'
+    });
+  },
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({
-        detail: response.statusText
-      }))
-      throw new Error(error.detail || 'Image generation failed');
+  async submitSurvey(surveyData: SurveySubmitRequest) {
+    console.log('[API] Submitting survey');
+    return apiFetch(`${API_URL}/api/survey/submit`, {
+      method: 'POST',
+      body: JSON.stringify(surveyData)
+    });
+  },
+
+  // --- Image Generation ---
+  async generateImageFromStory(data: { story: string; prompt?: string }): Promise<Blob> {
+    const authStore = useAuthStore()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
     }
 
-    // Return blob instead of JSON
-    const blob = await response.blob()
-    console.log('[API] Image generated successfully');
-    return blob;
-
-  } catch (error: any) {
-    clearTimeout(timeoutId)
-
-    if (error.name === 'AbortError') {
-      throw new Error('Image generation timeout - please try again')
+    if (authStore.authToken) {
+      headers['Authorization'] = `Bearer ${authStore.authToken}`
     }
 
-    console.error('[API] Image generation failed:', error)
-    throw error
-  }
-},
+    console.log('[API] Generating image from story');
 
-  // Health check
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 60000) // 60s timeout
+
+    try {
+      const response = await fetch(`${API_URL}/api/image/generate-from-story`, {
+        method: 'POST',
+        credentials: 'omit',
+        headers,
+        body: JSON.stringify(data),
+        signal: controller.signal,
+        mode: 'cors',
+      });
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({
+          detail: response.statusText
+        }))
+        throw new Error(error.detail || 'Image generation failed');
+      }
+
+      return await response.blob()
+
+    } catch (error: any) {
+      clearTimeout(timeoutId)
+      if (error.name === 'AbortError') {
+        throw new Error('Image generation timeout - please try again')
+      }
+      console.error('[API] Image generation failed:', error)
+      throw error
+    }
+  },
+
+  // --- Health Check ---
   async healthCheck() {
     const response = await fetch(`${API_URL}/health`, {
       method: 'GET'

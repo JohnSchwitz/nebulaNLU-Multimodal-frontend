@@ -5,7 +5,7 @@
             <div class="logo-name-nav-container">
               <img src="../assets/crab-nebula-296x142.jpg" alt="Nebula-NLP Logo" class="logo"/>
               <div class="name-nav">
-                <h1 class="site-name">Nebula-NLP.com</h1>
+                <h1 class="site-name">Nebula-NLU.com</h1>
                 <nav>
                     <a href="https://nebula-nlu.com">Home</a>
                     <router-link to="/example-story">Example Story</router-link>

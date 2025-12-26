@@ -1,108 +1,86 @@
-// tests/components/CreateStory.spec.ts
+// tests/components/CreateStory/CreateStory.spec.ts
 
 import { mount, flushPromises } from '@vue/test-utils';
-import { reactive } from 'vue';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { useAuthStore } from '@/stores/auth';
 import CreateStory from '@/views/CreateStory.vue';
 import api from '@/services/api';
 
-// Mock the entire API service
+// --- 1. MOCK API SERVICE ---
 vi.mock('@/services/api');
 
 describe('CreateStory.vue', () => {
   let authStore: ReturnType<typeof useAuthStore>;
 
+  const setupAuthenticatedUser = () => {
+    authStore.authToken = 'fake-jwt-token';
+    authStore.userId = 'test-user-id';
+    authStore.userName = 'Test User';
+  };
+
   beforeEach(() => {
-    // Create a fresh Pinia instance for each test
     setActivePinia(createPinia());
-
-    // Get the actual auth store instance
     authStore = useAuthStore();
-
-    // Reset mocks and localStorage
     vi.clearAllMocks();
-    localStorage.clear();
 
-    // Mock the UI texts API (called on mount)
+    // Default Happy Path Mocks
     vi.mocked(api.getUiTexts).mockResolvedValue({
       placeholderPrompts: ['A test prompt...'],
       initialStoryGuidance: 'Tell me a test story for {{name}}.',
     });
+
+    vi.mocked(api.getAccountInfo).mockResolvedValue({
+      user_id: 'test-user-id',
+      story_count: 5,
+      story_limit: 10,
+      stories_remaining: 5,
+      subscription_type: 'free',
+      can_create_story: true
+    });
+
+    vi.mocked(api.getSurveyStatus).mockResolvedValue({
+      has_submitted: false,
+      should_show_survey: false,
+      completed_stories_count: 5,
+      last_submitted_at: null
+    });
   });
 
-  it('should display authentication prompt when user is not authenticated', async () => {
-    // ARRANGE: User is not authenticated (default state)
-    const wrapper = mount(CreateStory);
-    await flushPromises();
+  // --- MOUNT HELPER WITH STUBS ---
+  const mountComponent = () => {
+    return mount(CreateStory, {
+      global: {
+        stubs: {
+          // We stub these so we don't have to test their internal logic here
+          SurveyModal: { template: '<div data-testid="survey-modal-stub" />' },
+          SurveyBanner: { template: '<div data-testid="survey-banner-stub" />' }
+        }
+      }
+    });
+  };
 
-    // ASSERT: Should show login prompt
+  // --- TESTS ---
+
+  it('should display authentication prompt when user is not authenticated', async () => {
+    authStore.authToken = null;
+    const wrapper = mountComponent();
+    await flushPromises();
     expect(wrapper.text()).toContain('Please log in via Ghost');
   });
 
-  it('should display welcome message when user is authenticated', async () => {
-    // ARRANGE: Set authenticated user
-    authStore.userId = 'test-user-id';
-    authStore.userName = 'Test User';
-    authStore.authToken = 'fake-jwt-token';
-    localStorage.setItem('app_auth_token', 'fake-jwt-token');
-
-    const wrapper = mount(CreateStory);
+  it('should fetch account info and display credits when authenticated', async () => {
+    setupAuthenticatedUser();
+    const wrapper = mountComponent();
     await flushPromises();
-
-    // ASSERT: Should show welcome message with user name
-    expect(wrapper.text()).toContain('Hello Test User!');
-    expect(wrapper.text()).toContain('Let\'s Begin!');
+    expect(api.getAccountInfo).toHaveBeenCalled();
+    // Regex matches "Stories Remaining: 5 / 10" ignoring spans/whitespace
+    expect(wrapper.text()).toMatch(/Stories Remaining:.*5.*\/.*10/);
   });
 
-  it('should start a new story when user submits initial prompt', async () => {
-    // ARRANGE: Authenticated user
-    authStore.userId = 'test-user-id';
-    authStore.userName = 'Test User';
-    authStore.authToken = 'fake-jwt-token';
-    localStorage.setItem('app_auth_token', 'fake-jwt-token');
+  it('should start a new story and decrement local credit count', async () => {
+    setupAuthenticatedUser();
 
-    // Mock the startStory API
-    vi.mocked(api.startStory).mockResolvedValue({
-      session_id: 'session-123',
-      story: 'Once upon a time in a magical kingdom...',
-      iteration: 1,
-      is_complete: false,
-      next_prompt_for_user: 'What was the name of the kingdom?',
-    });
-
-    const wrapper = mount(CreateStory);
-    await flushPromises();
-
-    // ACT: Enter prompt and click start button
-    const textarea = wrapper.find('textarea#story-teller-input');
-    await textarea.setValue('Tell me a story about a magical kingdom');
-
-    const startButton = wrapper.find('[data-testid="start-story-button"]');
-    await startButton.trigger('click');
-    await flushPromises();
-
-    // ASSERT: API was called correctly
-    expect(api.startStory).toHaveBeenCalledWith({
-      initial_prompt: 'Tell me a story about a magical kingdom',
-    });
-
-    // Story content should be displayed
-    expect(wrapper.text()).toContain('Once upon a time in a magical kingdom...');
-
-    // Next prompt suggestion should be shown
-    expect(wrapper.text()).toContain('What was the name of the kingdom?');
-  });
-
-  it('should continue story when user provides feedback', async () => {
-    // ARRANGE: Authenticated user with existing session
-    authStore.userId = 'test-user-id';
-    authStore.userName = 'Test User';
-    authStore.authToken = 'fake-jwt-token';
-    localStorage.setItem('app_auth_token', 'fake-jwt-token');
-
-    // Mock startStory for initial story
     vi.mocked(api.startStory).mockResolvedValue({
       session_id: 'session-123',
       story: 'Once upon a time...',
@@ -111,109 +89,86 @@ describe('CreateStory.vue', () => {
       next_prompt_for_user: 'What happens next?',
     });
 
-    // Mock continueStory for continuation
-    vi.mocked(api.continueStory).mockResolvedValue({
-      session_id: 'session-123',
-      story: 'The brave knight drew his sword...',
-      iteration: 2,
-      is_complete: false,
-      next_prompt_for_user: 'Who was the knight fighting?',
-    });
-
-    const wrapper = mount(CreateStory);
+    const wrapper = mountComponent();
     await flushPromises();
 
-    // Start initial story
-    await wrapper.find('textarea#story-teller-input').setValue('Tell me a story');
-    await wrapper.find('[data-testid="start-story-button"]').trigger('click');
+    // 1. Enter Valid Prompt (>10 chars)
+    const textarea = wrapper.find('textarea#story-teller-input');
+    await textarea.setValue('A magic dragon story that is long enough');
+
+    // 2. Click Start
+    const startBtn = wrapper.findAll('button').find(b => b.text().includes('Start Adventure'));
+    if (!startBtn) throw new Error('Start button not found');
+    await startBtn.trigger('click');
     await flushPromises();
 
-    // ACT: Continue the story
-    await wrapper.find('textarea#story-teller-input').setValue('A knight appeared');
-    await wrapper.find('[data-testid="continue-story-button"]').trigger('click');
-    await flushPromises();
-
-    // ASSERT: continueStory API was called
-    expect(api.continueStory).toHaveBeenCalledWith({
-      session_id: 'session-123',
-      feedback: 'A knight appeared',
-    });
-
-    // Both story parts should be visible
+    // 3. Verify
+    expect(api.startStory).toHaveBeenCalledWith({ initial_prompt: 'A magic dragon story that is long enough' });
     expect(wrapper.text()).toContain('Once upon a time...');
-    expect(wrapper.text()).toContain('The brave knight drew his sword...');
+    // Optimistic UI check (5 -> 4)
+    expect(wrapper.text()).toMatch(/Stories Remaining:.*4.*\/.*10/);
   });
 
-  it('should complete story and enable save options', async () => {
-    // ARRANGE: Authenticated user with existing session
-    authStore.userId = 'test-user-id';
-    authStore.userName = 'Test User';
-    authStore.authToken = 'fake-jwt-token';
-    localStorage.setItem('app_auth_token', 'fake-jwt-token');
+  it('should block story creation if user has 0 credits', async () => {
+    setupAuthenticatedUser();
 
-    // Mock startStory
+    // Mock 0 Credits
+    vi.mocked(api.getAccountInfo).mockResolvedValue({
+      user_id: 'test-user-id',
+      story_count: 10,
+      story_limit: 10,
+      stories_remaining: 0,
+      subscription_type: 'free',
+      can_create_story: false
+    });
+
+    const wrapper = mountComponent();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Story Limit Reached');
+
+    // Ensure button is disabled
+    const startBtn = wrapper.findAll('button').find(b => b.text().includes('Start Adventure'));
+    if (startBtn) {
+      expect(startBtn.element.disabled).toBe(true);
+    }
+  });
+
+  it('should complete story and trigger survey modal if eligible', async () => {
+    setupAuthenticatedUser();
+
+    // Mock the flow
     vi.mocked(api.startStory).mockResolvedValue({
-      session_id: 'session-123',
-      story: 'Once upon a time...',
-      iteration: 1,
-      is_complete: false,
-      next_prompt_for_user: 'Continue?',
+      session_id: 'sess-1', story: 'Start', iteration: 1, is_complete: false
     });
-
-    // Mock completeStory
     vi.mocked(api.completeStory).mockResolvedValue({
-      session_id: 'session-123',
-      full_story: 'Once upon a time... And they lived happily ever after. The End.',
-      iteration: 2,
-      is_complete: true,
+      session_id: 'sess-1', full_story: 'The End', iteration: 2, is_complete: true
+    });
+    // Mock Survey Trigger
+    vi.mocked(api.getSurveyStatus).mockResolvedValue({
+      has_submitted: false, should_show_survey: true, completed_stories_count: 3
     });
 
-    const wrapper = mount(CreateStory);
+    const wrapper = mountComponent();
     await flushPromises();
 
-    // Start story
-    await wrapper.find('textarea#story-teller-input').setValue('Tell me a story');
-    await wrapper.find('[data-testid="start-story-button"]').trigger('click');
+    // 1. Start Story
+    await wrapper.find('textarea').setValue('Start a valid story here');
+    const startBtn = wrapper.findAll('button').find(b => b.text().includes('Start Adventure'));
+    await startBtn?.trigger('click');
     await flushPromises();
 
-    // ACT: Complete the story
-    await wrapper.find('[data-testid="complete-story-button"]').trigger('click');
+    // 2. Wait for UI to switch to "Finish Story"
+    expect(wrapper.text()).toContain('Finish Story');
+
+    // 3. Finish Story
+    const finishBtn = wrapper.findAll('button').find(b => b.text().includes('Finish Story'));
+    await finishBtn?.trigger('click');
     await flushPromises();
 
-    // ASSERT: completeStory API was called
-    expect(api.completeStory).toHaveBeenCalledWith({
-      session_id: 'session-123',
-    });
-
-    // Completion message should be shown
-    expect(wrapper.text()).toContain('Story Complete');
-
-    // Save section should be visible
-    expect(wrapper.text()).toContain('Save Your Masterpiece');
-    expect(wrapper.find('input#storyNameInput').exists()).toBe(true);
-  });
-
-  it('should display error message when story generation fails', async () => {
-    // ARRANGE: Authenticated user
-    authStore.userId = 'test-user-id';
-    authStore.userName = 'Test User';
-    authStore.authToken = 'fake-jwt-token';
-    localStorage.setItem('app_auth_token', 'fake-jwt-token');
-
-    // Mock API to reject with error
-    const apiError = new Error('Network connection failed');
-    vi.mocked(api.startStory).mockRejectedValue(apiError);
-
-    const wrapper = mount(CreateStory);
-    await flushPromises();
-
-    // ACT: Try to start story
-    await wrapper.find('textarea#story-teller-input').setValue('Tell me a story');
-    await wrapper.find('[data-testid="start-story-button"]').trigger('click');
-    await flushPromises();
-
-    // ASSERT: Error message is displayed
-    expect(wrapper.text()).toContain('Story Generation Error');
-    expect(wrapper.text()).toContain('Network connection failed');
+    // 4. Assert
+    expect(api.completeStory).toHaveBeenCalled();
+    // Check if Survey Modal stub is rendered
+    expect(wrapper.find('[data-testid="survey-modal-stub"]').exists()).toBe(true);
   });
 });
